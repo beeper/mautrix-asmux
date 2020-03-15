@@ -41,7 +41,5 @@ setuptools.setup(
         [console_scripts]
         mautrix-asproxy=mautrix_asproxy.__main__:main
     """,
-    data_files=[
-        (".", ["example-config.yaml"])
-    ],
+    package_data={"mautrix_asmux": ["example-config.yaml"]},
 )

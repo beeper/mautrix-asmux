@@ -5,18 +5,12 @@ homeserver:
     # Client-server API URL.
     address: http://localhost:8008
 
-# Application service host/registration related details
+# Application service registration related details.
 # Changing these values requires regeneration of the registration.
 appservice:
     # The address that the homeserver can use to connect to this appservice.
+    # The listen host/port are defined in the mux section below.
     address: http://localhost:29326
-
-    # The hostname and port where this appservice should listen.
-    hostname: 0.0.0.0
-    port: 29326
-    # The maximum body size of appservice API requests (from the homeserver) in mebibytes
-    # Usually 1 is enough, but on high-traffic bridges you might need to increase this to avoid 413s
-    max_body_size: 1
 
     # The unique ID of this appservice.
     id: asmux
@@ -39,6 +33,11 @@ appservice:
 
 # Main mautrix-asmux settings
 mux:
+    # The hostname and port where this appservice should listen.
+    # This is both the server where synapse sends AS transactions and the server where bridges
+    # should connect to use the client-server API.
+    hostname: 0.0.0.0
+    port: 29326
     # Database URI. Currently only supports postgres://user:password@host/dbname
     database: postgres:///mautrix-asmux
 
