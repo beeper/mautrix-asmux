@@ -13,13 +13,21 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Optional
+from typing import Optional, List, Dict
+from collections import defaultdict
+from uuid import UUID
 import logging
 import asyncio
 
-from aiohttp import web
+import aiohttp
+from aiohttp import web, hdrs
+from yarl import URL
 
+from mautrix.types import JSON
 from mautrix.appservice import AppServiceServerMixin
+
+from .database import Room, AppService
+from .config import Config
 
 
 class MuxServer(AppServiceServerMixin):
@@ -27,18 +35,35 @@ class MuxServer(AppServiceServerMixin):
     app: web.Application
     runner: web.AppRunner
     loop: asyncio.AbstractEventLoop
+    http: aiohttp.ClientSession
 
     host: str
     port: int
 
-    def __init__(self, host: str, port: int, loop: Optional[asyncio.AbstractEventLoop] = None
-                 ) -> None:
+    hs_domain: str
+    hs_address: URL
+    hs_token: str
+    as_token: str
+    global_prefix: str
+    hs_suffix: str
+
+    def __init__(self, config: Config, http: Optional[aiohttp.ClientSession],
+                 loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
         super().__init__()
-        self.host = host
-        self.port = port
+        self.host = config["mux.hostname"]
+        self.port = config["mux.port"]
+        self.hs_domain = config["homeserver.domain"]
+        self.hs_address = URL(config["homeserver.address"])
+        self.hs_token = config["appservice.hs_token"]
+        self.as_token = config["appservice.as_token"]
+        self.global_prefix = "@" + config["appservice.namespace.prefix"]
+        self.hs_suffix = f":{self.hs_domain}"
         self.loop = loop or asyncio.get_event_loop()
+        self.http = http
         self.app = web.Application()
         self.register_routes(self.app)
+        self.app.router.add_route(hdrs.METH_ANY, "/_matrix/{spec:(client|media)}/{path:.+}",
+                                  self.proxy)
         self.runner = web.AppRunner(self.app)
 
     async def start(self) -> None:
@@ -50,3 +75,93 @@ class MuxServer(AppServiceServerMixin):
     async def stop(self) -> None:
         self.log.debug("Stopping web server")
         await self.runner.cleanup()
+
+    async def proxy(self, request: web.Request) -> web.Response:
+        try:
+            auth = request.headers["Authorization"].lstrip("Bearer ")
+            id = UUID(auth[:36])
+            token = auth[37:]
+        except (KeyError, AttributeError, IndexError, ValueError):
+            return web.json_response(status=401, data={"error": "Missing or invalid auth header",
+                                                       "errcode": "M_UNAUTHORIZED"})
+        az = await AppService.get(id)
+        if not az or az.as_token != token:
+            return web.json_response(status=401, data={"error": "Incorrect auth token",
+                                                       "errcode": "M_UNAUTHORIZED"})
+        az_prefix = f"{self.global_prefix}{az.owner}_{az.prefix}_"
+
+        query = request.query.copy()
+        del query["access_token"]
+        if "user_id" not in query:
+            query["user_id"] = f"{az_prefix}{az.bot}{self.hs_suffix}"
+        elif not query["user_id"].startswith(az_prefix):
+            return web.json_response(status=403, data={
+                "error": "Application service cannot masquerade as this local user.",
+                "errcode": "M_FORBIDDEN"
+            })
+        elif not query["user_id"].endswith(self.hs_suffix):
+            return web.json_response(status=403, data={
+                "error": "Application service cannot masquerade as user on external homeserver.",
+                "errcode": "M_FORBIDDEN",
+            })
+
+        headers = request.headers.copy()
+        headers["Authorization"] = f"Bearer {self.as_token}"
+        del headers["Host"]
+
+        spec = request.match_info.get("spec", None)
+        path = request.match_info.get("path", None)
+        url = self.hs_address / "_matrix" / spec / path
+
+        try:
+            resp = await self.http.request(request.method, url, headers=headers,
+                                           params=query, data=request.content)
+        except aiohttp.ClientError:
+            raise web.HTTPBadGateway(text="Failed to contact homeserver")
+        body = resp.content
+        if url.path == "/_matrix/client/r0/createRoom" and request.method == hdrs.METH_POST:
+            # resp.content will be consumed when we read it once, so copy the bytes
+            body = await resp.read()
+            # resp.json() still works though, it uses the internal byte buffer in the response
+            data = await resp.json()
+            try:
+                room_id = data["room_id"]
+            except KeyError:
+                pass
+            else:
+                await Room(id=room_id, owner=az.id).insert()
+        return web.Response(status=resp.status, headers=resp.headers, body=body)
+
+    async def post_events(self, appservice: AppService, events: List[JSON], txn_id: str) -> None:
+        url = URL(appservice.address) / "_matrix" / "app" / "v1" / "transactions" / txn_id
+        await self.http.post(url.with_query({"access_token": appservice.hs_token}),
+                             json={"events": events})
+
+    async def register_room(self, event: JSON) -> Optional[Room]:
+        try:
+            if ((event["type"] != "m.room.member"
+                 or not event["state_key"].startswith(self.global_prefix))):
+                return None
+        except KeyError:
+            return None
+        localpart: str = event["state_key"].lstrip(self.global_prefix).rstrip(self.hs_suffix)
+        try:
+            owner, prefix, _ = localpart.split("_", 2)
+        except ValueError:
+            return None
+        az = await AppService.find(owner, prefix)
+        room = Room(id=event["room_id"], owner=az.id)
+        await room.insert()
+        return room
+
+    async def handle_transaction(self, transaction_id: str, events: List[JSON]) -> None:
+        data: Dict[UUID, List[JSON]] = defaultdict(lambda: [])
+        for event in events:
+            room = await Room.get(event["room_id"])
+            if not room:
+                room = await self.register_room(event)
+            if room:
+                data[room.owner].append(event)
+        ids = await AppService.get_many(list(data.items()))
+        await asyncio.gather(*[self.post_events(appservice, events, transaction_id)
+                               for appservice, events in zip(ids, data.values())], loop=self.loop)

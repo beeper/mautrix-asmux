@@ -13,12 +13,28 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+from typing import Iterable, Optional
+from uuid import UUID
+
 from attr import dataclass
+
+from mautrix.types import RoomID
 
 from .base import Base
 
 
 @dataclass
 class Room(Base):
-    owner: str
     id: str
+    owner: UUID
+
+    @classmethod
+    async def get(cls, room_id: RoomID) -> Optional['Room']:
+        row = await cls.db.fetchrow("SELECT id, owner FROM room WHERE id=$1", room_id)
+        return Room(**row) if row else None
+
+    async def insert(self) -> None:
+        await self.db.execute("INSERT INTO room (id, owner) VALUES ($1, $2)", self.id, self.owner)
+
+    async def delete(self) -> None:
+        await self.db.execute("DELETE FROM room WHERE id=$1 AND owner=$2", self.id, self.owner)

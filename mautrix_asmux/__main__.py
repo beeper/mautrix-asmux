@@ -64,8 +64,7 @@ class AppServiceMux(Program):
         super().prepare()
         self.database = Database(url=self.config["mux.database"], upgrade_table="mautrix_asmux")
         Base.db = self.database
-        self.server = MuxServer(self.config["mux.hostname"], self.config["mux.port"],
-                                loop=self.loop)
+        self.server = MuxServer(self.config, http=None, loop=self.loop)
 
     def prepare_config(self) -> None:
         self.config = self.config_class(self.args.config, self.args.registration,
@@ -77,6 +76,7 @@ class AppServiceMux(Program):
     async def start(self) -> None:
         await self.database.start()
         self.client = ClientSession(loop=self.loop)
+        self.server.http = self.client
         await self.server.start()
         await super().start()
 

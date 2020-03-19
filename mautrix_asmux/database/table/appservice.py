@@ -13,6 +13,9 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+from typing import Optional, List, Iterable
+from uuid import UUID
+
 from attr import dataclass
 
 from .base import Base
@@ -20,6 +23,29 @@ from .base import Base
 
 @dataclass
 class AppService(Base):
-    id: str
+    id: UUID
+    owner: str
     prefix: str
 
+    bot: str
+    address: str
+    hs_token: str
+    as_token: str
+
+    @classmethod
+    async def get(cls, id: UUID) -> Optional['AppService']:
+        row = await cls.db.fetchrow("SELECT id, owner, prefix, bot, address, hs_token, as_token "
+                                    "FROM appservice WHERE id=$1", id)
+        return AppService(**row) if row else None
+
+    @classmethod
+    async def find(cls, owner: str, prefix: str) -> Optional['AppService']:
+        row = await cls.db.fetchrow("SELECT id, owner, prefix, bot, address, hs_token, as_token "
+                                    "FROM appservice WHERE owner=$1 AND prefix=$2", owner, prefix)
+        return AppService(**row) if row else None
+
+    @classmethod
+    async def get_many(cls, ids: List[UUID]) -> Iterable['AppService']:
+        rows = await cls.db.fetch("SELECT id, owner, prefix, bot, address, hs_token, as_token "
+                                  "FROM appservice WHERE id = ANY($1::varchar[])", ids)
+        return (AppService(**row) for row in rows)
