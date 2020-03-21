@@ -47,5 +47,5 @@ class AppService(Base):
     @classmethod
     async def get_many(cls, ids: List[UUID]) -> Iterable['AppService']:
         rows = await cls.db.fetch("SELECT id, owner, prefix, bot, address, hs_token, as_token "
-                                  "FROM appservice WHERE id = ANY($1::varchar[])", ids)
+                                  "FROM appservice WHERE id = ANY($1::uuid[])", ids)
         return (AppService(**row) for row in rows)

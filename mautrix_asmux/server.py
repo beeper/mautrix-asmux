@@ -91,7 +91,10 @@ class MuxServer(AppServiceServerMixin):
         az_prefix = f"{self.global_prefix}{az.owner}_{az.prefix}_"
 
         query = request.query.copy()
-        del query["access_token"]
+        try:
+            del query["access_token"]
+        except KeyError:
+            pass
         if "user_id" not in query:
             query["user_id"] = f"{az_prefix}{az.bot}{self.hs_suffix}"
         elif not query["user_id"].startswith(az_prefix):
@@ -107,7 +110,10 @@ class MuxServer(AppServiceServerMixin):
 
         headers = request.headers.copy()
         headers["Authorization"] = f"Bearer {self.as_token}"
-        del headers["Host"]
+        try:
+            del headers["Host"]
+        except KeyError:
+            pass
 
         spec = request.match_info.get("spec", None)
         path = request.match_info.get("path", None)
@@ -119,23 +125,25 @@ class MuxServer(AppServiceServerMixin):
         except aiohttp.ClientError:
             raise web.HTTPBadGateway(text="Failed to contact homeserver")
         body = resp.content
-        if url.path == "/_matrix/client/r0/createRoom" and request.method == hdrs.METH_POST:
-            # resp.content will be consumed when we read it once, so copy the bytes
-            body = await resp.read()
-            # resp.json() still works though, it uses the internal byte buffer in the response
-            data = await resp.json()
-            try:
-                room_id = data["room_id"]
-            except KeyError:
-                pass
-            else:
-                await Room(id=room_id, owner=az.id).insert()
+        # if url.path == "/_matrix/client/r0/createRoom" and request.method == hdrs.METH_POST:
+        #     # resp.content will be consumed when we read it once, so copy the bytes
+        #     body = await resp.read()
+        #     # resp.json() still works though, it uses the internal byte buffer in the response
+        #     data = await resp.json()
+        #     try:
+        #         room_id = data["room_id"]
+        #     except KeyError:
+        #         pass
+        #     else:
+        #         await Room(id=room_id, owner=az.id).insert()
         return web.Response(status=resp.status, headers=resp.headers, body=body)
 
     async def post_events(self, appservice: AppService, events: List[JSON], txn_id: str) -> None:
         url = URL(appservice.address) / "_matrix" / "app" / "v1" / "transactions" / txn_id
-        await self.http.post(url.with_query({"access_token": appservice.hs_token}),
-                             json={"events": events})
+        resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
+                                   json={"events": events})
+        if resp.status >= 400:
+            self.log.warning(f"Failed to post events to {url}: {resp.status} {await resp.text()}")
 
     async def register_room(self, event: JSON) -> Optional[Room]:
         try:
@@ -162,6 +170,6 @@ class MuxServer(AppServiceServerMixin):
                 room = await self.register_room(event)
             if room:
                 data[room.owner].append(event)
-        ids = await AppService.get_many(list(data.items()))
+        ids = await AppService.get_many(list(data.keys()))
         await asyncio.gather(*[self.post_events(appservice, events, transaction_id)
                                for appservice, events in zip(ids, data.values())], loop=self.loop)
