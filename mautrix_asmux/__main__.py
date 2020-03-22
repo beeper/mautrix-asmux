@@ -23,7 +23,7 @@ from mautrix.util.async_db import Database
 from . import __version__
 from .config import Config
 from .server import MuxServer
-from .database import Base
+from .database import Base, upgrade_table
 
 
 class AppServiceMux(Program):
@@ -62,9 +62,13 @@ class AppServiceMux(Program):
 
     def prepare(self) -> None:
         super().prepare()
-        self.database = Database(url=self.config["mux.database"], upgrade_table="mautrix_asmux")
+        self.database = Database(url=self.config["mux.database"], upgrade_table=upgrade_table)
         Base.db = self.database
-        self.server = MuxServer(self.config, http=None, loop=self.loop)
+        self.client = self.loop.run_until_complete(self._create_client())
+        self.server = MuxServer(self.config, http=self.client, loop=self.loop)
+
+    async def _create_client(self) -> ClientSession:
+        return ClientSession(loop=self.loop)
 
     def prepare_config(self) -> None:
         self.config = self.config_class(self.args.config, self.args.registration,
@@ -75,8 +79,6 @@ class AppServiceMux(Program):
 
     async def start(self) -> None:
         await self.database.start()
-        self.client = ClientSession(loop=self.loop)
-        self.server.http = self.client
         await self.server.start()
         await super().start()
 

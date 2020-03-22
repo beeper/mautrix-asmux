@@ -15,10 +15,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from asyncpg import Connection
 
-from mautrix.util.async_db import register_upgrade
+from .upgrade_table import upgrade_table
 
 
-@register_upgrade(description="Initial revision")
+@upgrade_table.register(description="Initial revision")
 async def upgrade_v1(conn: Connection) -> None:
     await conn.execute("""CREATE TABLE "user" (
         id VARCHAR(32) PRIMARY KEY

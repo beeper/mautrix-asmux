@@ -1,5 +1,4 @@
-from mautrix.util.async_db.upgrade import register_upgrade_table_parent_module
-
-register_upgrade_table_parent_module("mautrix_asmux")
-
+from .upgrade_table import upgrade_table
 from . import initial_revision
+
+__all__ = ["upgrade_table"]
