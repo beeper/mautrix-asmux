@@ -25,7 +25,7 @@ from .errors import Error
 
 
 class ClientProxy:
-    log: logging.Logger = logging.getLogger("mau.proxy.cs")
+    log: logging.Logger = logging.getLogger("mau.api.cs_proxy")
     http: aiohttp.ClientSession
 
     mxid_prefix: str

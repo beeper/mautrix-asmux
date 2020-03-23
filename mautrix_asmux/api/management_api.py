@@ -13,13 +13,14 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, Tuple
 from uuid import UUID
+import logging
 import json
 import re
 
-from aiohttp import web
-import attr
+from aiohttp import web, ClientSession
+from yarl import URL
 
 from mautrix.types import JSON
 
@@ -44,16 +45,25 @@ def custom_dumps(*args, **kwargs):
 
 
 class ManagementAPI:
+    log: logging.Logger = logging.getLogger("mau.api.management")
+    http: ClientSession
+
     global_prefix: str
     exclusive: bool
     server_name: str
     shared_secret: str
+    hs_address: URL
+    as_token: str
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, http: ClientSession) -> None:
         self.global_prefix = config["appservice.namespace.prefix"]
         self.exclusive = config["appservice.namespace.exclusive"]
         self.server_name = config["homeserver.domain"]
         self.shared_secret = config["mux.shared_secret"]
+        self.hs_address = URL(config["homeserver.address"])
+        self.as_token = config["appservice.as_token"]
+
+        self.http = http
 
         self.app = web.Application(middlewares=[self.check_auth])
         self.app.router.add_put("/appservice/{id}", self.provision_appservice)
@@ -111,6 +121,15 @@ class ManagementAPI:
             raise Error.appservice_not_found
         return web.json_response(self._make_registration(az))
 
+    async def register_as_bot(self, owner: str, prefix: str, bot: str) -> Tuple[str, str]:
+        localpart = f"{self.global_prefix}{owner}_{prefix}_{bot}"
+        url = (self.hs_address / "_matrix/client/r0/register").with_query({"kind": "user"})
+        resp = await self.http.post(url, json={"username": localpart}, headers={
+            "Authorization": f"Bearer {self.as_token}"
+        })
+        data = await resp.json()
+        return data["access_token"], data["device_id"]
+
     async def provision_appservice(self, req: web.Request) -> web.Response:
         try:
             data = await req.json()
@@ -124,14 +143,21 @@ class ManagementAPI:
                 raise Error.invalid_owner
             elif not part_regex.fullmatch(prefix):
                 raise Error.invalid_prefix
-            az = await AppService.find_or_create(owner, prefix, bot=data.get("bot", "bot"),
-                                                 address=data.get("address", ""))
-            # TODO register bot account and store device ID
+            bot = data.get("bot", "bot")
+            address = data.get("address", "")
+            try:
+                access_token, device_id = await self.register_as_bot(owner, prefix, bot)
+            except Exception:
+                self.log.exception(f"Failed to register bridge bot {owner}_{prefix}_{bot}")
+                raise Error.failed_to_register_bot
+            az = await AppService.find_or_create(owner, prefix, bot=bot, address=address,
+                                                 bot_access_token=access_token,
+                                                 bot_device_id=device_id)
+            self.log.info(f"Created appservice {owner}_{prefix}")
         else:
             az = await AppService.get(uuid)
             if not az:
                 raise Error.appservice_not_found
         if not az.created_:
-            az.address = data.get("address", az.address)
-            await az.update()
+            await az.set_address(data.get("address"))
         return web.json_response(self._make_registration(az), status=201 if az.created_ else 200)

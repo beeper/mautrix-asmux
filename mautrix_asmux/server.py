@@ -52,7 +52,7 @@ class MuxServer:
         self.as_proxy = AppServiceProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                         hs_token=config["appservice.hs_token"], http=self.http,
                                         loop=self.loop)
-        self.management_api = ManagementAPI(config=config)
+        self.management_api = ManagementAPI(config=config, http=self.http)
 
         self.app = web.Application()
         self.as_proxy.register_routes(self.app)

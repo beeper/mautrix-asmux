@@ -20,18 +20,18 @@ from .upgrade_table import upgrade_table
 
 @upgrade_table.register(description="Initial revision")
 async def upgrade_v1(conn: Connection) -> None:
-    await conn.execute("""CREATE TABLE "user" (
-        id VARCHAR(32) PRIMARY KEY
-    )""")
     await conn.execute("""CREATE TABLE appservice (
         id     UUID         PRIMARY KEY,
-        owner  VARCHAR(32)  NOT NULL REFERENCES "user"(id),
+        owner  VARCHAR(32)  NOT NULL,
         prefix VARCHAR(32)  NOT NULL,
 
-        bot      VARCHAR(255) NOT NULL,
         address  VARCHAR(255) NOT NULL,
         hs_token VARCHAR(255) NOT NULL,
         as_token VARCHAR(255) NOT NULL,
+
+        bot              VARCHAR(32)  NOT NULL,
+        bot_access_token TEXT,
+        bot_device_id    VARCHAR(255),
 
         UNIQUE (owner, prefix)
     )""")

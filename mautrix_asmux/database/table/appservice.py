@@ -30,10 +30,13 @@ class AppService(Base):
     owner: str
     prefix: str
 
-    bot: str
     address: str
     hs_token: str
     as_token: str
+
+    bot: str
+    bot_access_token: Optional[str] = None
+    bot_device_id: Optional[str] = None
 
     created_: bool = False
 
@@ -41,7 +44,8 @@ class AppService(Base):
     async def get(cls, id: UUID, *, conn: Optional[asyncpg.Connection] = None
                   ) -> Optional['AppService']:
         conn = conn or cls.db
-        row = await conn.fetchrow("SELECT id, owner, prefix, bot, address, hs_token, as_token "
+        row = await conn.fetchrow("SELECT id, owner, prefix, address, hs_token, as_token, bot, "
+                                  "       bot_access_token, bot_device_id "
                                   "FROM appservice WHERE id=$1::uuid", id)
         return AppService(**row) if row else None
 
@@ -49,7 +53,8 @@ class AppService(Base):
     async def find(cls, owner: str, prefix: str, *, conn: Optional[asyncpg.Connection] = None
                    ) -> Optional['AppService']:
         conn = conn or cls.db
-        row = await conn.fetchrow("SELECT id, owner, prefix, bot, address, hs_token, as_token "
+        row = await conn.fetchrow("SELECT id, owner, prefix, address, hs_token, as_token, bot, "
+                                  "       bot_access_token, bot_device_id "
                                   "FROM appservice WHERE owner=$1 AND prefix=$2", owner, prefix)
         return AppService(**row) if row else None
 
@@ -58,8 +63,8 @@ class AppService(Base):
         return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
     @classmethod
-    async def find_or_create(cls, owner: str, prefix: str, *, bot: str = "bot", address: str = ""
-                             ) -> 'AppService':
+    async def find_or_create(cls, owner: str, prefix: str, *, bot: str = "bot", address: str = "",
+                             bot_access_token: str = "", bot_device_id: str = "") -> 'AppService':
         async with cls.db.acquire() as conn, conn.transaction():
             az = await cls.find(owner, prefix, conn=conn)
             if not az:
@@ -67,8 +72,9 @@ class AppService(Base):
                 hs_token = cls._random(64)
                 # The input AS token also contains the UUID, so we want this to be a bit shorter
                 as_token = cls._random(27)
-                az = AppService(id=uuid, owner=owner, prefix=prefix, bot=bot, address=address,
-                                hs_token=hs_token, as_token=as_token)
+                az = AppService(id=uuid, owner=owner, prefix=prefix, address=address,
+                                hs_token=hs_token, as_token=as_token, bot=bot,
+                                bot_device_id=bot_device_id, bot_access_token=bot_access_token)
                 az.created_ = True
                 await az.insert(conn=conn)
             return az
@@ -77,22 +83,28 @@ class AppService(Base):
     async def get_many(cls, ids: List[UUID], *, conn: Optional[asyncpg.Connection] = None
                        ) -> Iterable['AppService']:
         conn = conn or cls.db
-        rows = await conn.fetch("SELECT id, owner, prefix, bot, address, hs_token, as_token "
+        rows = await conn.fetch("SELECT id, owner, prefix, address, hs_token, as_token, bot, "
+                                "       bot_access_token, bot_device_id "
                                 "FROM appservice WHERE id = ANY($1::uuid[])", ids)
         return (AppService(**row) for row in rows)
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
         await conn.execute("INSERT INTO appservice "
-                           "(id, owner, prefix, bot, address, hs_token, as_token) "
-                           "VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                           self.id, self.owner, self.prefix, self.bot, self.address,
-                           self.hs_token, self.as_token)
+                           "(id, owner, prefix, address, hs_token, as_token, "
+                           " bot, bot_access_token, bot_device_id) "
+                           "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                           self.id, self.owner, self.prefix, self.address,
+                           self.hs_token, self.as_token,
+                           self.bot, self.bot_access_token, self.bot_device_id)
 
-    async def update(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
+    async def set_address(self, address: str, *,
+                          conn: Optional[asyncpg.Connection] = None) -> None:
+        if not address or self.address == address:
+            return
+        self.address = address
         conn = conn or self.db
-        await conn.execute("UPDATE appservice SET address=$2 WHERE id=$1",
-                           self.id, self.address)
+        await conn.execute("UPDATE appservice SET address=$2 WHERE id=$1", self.id, self.address)
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db

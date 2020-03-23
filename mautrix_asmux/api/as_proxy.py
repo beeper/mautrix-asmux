@@ -29,7 +29,7 @@ from ..database import Room, AppService
 
 
 class AppServiceProxy(AppServiceServerMixin):
-    log: logging.Logger = logging.getLogger("mau.proxy.as")
+    log: logging.Logger = logging.getLogger("mau.api.as_proxy")
     loop: asyncio.AbstractEventLoop
     http: aiohttp.ClientSession
 

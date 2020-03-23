@@ -89,6 +89,11 @@ class _ErrorMeta:
         return web.HTTPBadGateway(**self._make_error("M_BAD_GATEWAY",
                                                      "Failed to contact homeserver"))
 
+    @property
+    def failed_to_register_bot(self) -> web.HTTPException:
+        return web.HTTPInternalServerError(**self._make_error("M_UNKNOWN",
+                                                              "Failed to register bridge bot"))
+
 
 class Error(metaclass=_ErrorMeta):
     pass
