@@ -21,6 +21,7 @@ from aiohttp import web, hdrs
 from yarl import URL
 
 from ..database import AppService
+from .errors import Error
 
 
 class ClientProxy:
@@ -45,16 +46,20 @@ class ClientProxy:
 
     async def proxy(self, request: web.Request) -> web.Response:
         try:
-            auth = request.headers["Authorization"].lstrip("Bearer ")
+            auth = request.headers["Authorization"]
+            assert auth and auth.startswith("Bearer ")
+            auth = auth.lstrip("Bearer ")
             uuid = UUID(auth[:36])
             token = auth[37:]
-        except (KeyError, AttributeError, IndexError, ValueError):
-            return web.json_response(status=401, data={"error": "Missing or invalid auth header",
-                                                       "errcode": "M_UNAUTHORIZED"})
+        except KeyError:
+            raise Error.missing_auth_header
+        except AssertionError:
+            raise Error.invalid_auth_header
+        except ValueError:
+            raise Error.invalid_auth_token
         az = await AppService.get(uuid)
         if not az or az.as_token != token:
-            return web.json_response(status=401, data={"error": "Incorrect auth token",
-                                                       "errcode": "M_UNAUTHORIZED"})
+            raise Error.invalid_auth_token
         az_prefix = f"{self.mxid_prefix}{az.owner}_{az.prefix}_"
 
         query = request.query.copy()
@@ -65,15 +70,9 @@ class ClientProxy:
         if "user_id" not in query:
             query["user_id"] = f"{az_prefix}{az.bot}{self.mxid_suffix}"
         elif not query["user_id"].startswith(az_prefix):
-            return web.json_response(status=403, data={
-                "error": "Application service cannot masquerade as this local user.",
-                "errcode": "M_FORBIDDEN"
-            })
+            raise Error.invalid_user_id
         elif not query["user_id"].endswith(self.mxid_suffix):
-            return web.json_response(status=403, data={
-                "error": "Application service cannot masquerade as user on external homeserver.",
-                "errcode": "M_FORBIDDEN",
-            })
+            raise Error.external_user_id
 
         headers = request.headers.copy()
         headers["Authorization"] = f"Bearer {self.as_token}"
@@ -90,5 +89,5 @@ class ClientProxy:
             resp = await self.http.request(request.method, url, headers=headers,
                                            params=query, data=request.content)
         except aiohttp.ClientError:
-            raise web.HTTPBadGateway(text="Failed to contact homeserver")
+            raise Error.failed_to_contact_homeserver
         return web.Response(status=resp.status, headers=resp.headers, body=resp.content)

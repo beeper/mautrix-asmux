@@ -22,7 +22,7 @@ from aiohttp import web
 from yarl import URL
 
 from .config import Config
-from .api import ClientProxy, AppServiceProxy
+from .api import ClientProxy, AppServiceProxy, ManagementAPI
 
 
 class MuxServer:
@@ -52,9 +52,11 @@ class MuxServer:
         self.as_proxy = AppServiceProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                         hs_token=config["appservice.hs_token"], http=self.http,
                                         loop=self.loop)
+        self.management_api = ManagementAPI(config=config)
 
         self.app = web.Application()
         self.as_proxy.register_routes(self.app)
+        self.app.add_subapp("/_matrix/asmux", self.management_api.app)
         self.app.add_subapp("/_matrix", self.cs_proxy.app)
         self.runner = web.AppRunner(self.app)
 

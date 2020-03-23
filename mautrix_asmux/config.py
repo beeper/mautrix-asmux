@@ -57,7 +57,7 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         ] if self._check_tokens else [])
 
     def do_update(self, helper: ConfigUpdateHelper) -> None:
-        copy, _, _ = helper
+        copy, _, base = helper
 
         copy("homeserver.address")
         copy("homeserver.domain")
@@ -75,6 +75,10 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         copy("mux.hostname")
         copy("mux.port")
         copy("mux.database")
+        if self.get("mux.shared_secret", "generate") == "generate":
+            base["mux.shared_secret"] = self._new_token()
+        else:
+            copy("mux.shared_secret")
 
         copy("logging")
 

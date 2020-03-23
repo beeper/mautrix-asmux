@@ -47,6 +47,10 @@ class AppServiceProxy(AppServiceServerMixin):
         self.http = http
 
     async def post_events(self, appservice: AppService, events: List[JSON], txn_id: str) -> None:
+        if not appservice.address:
+            self.log.warning(f"Not sending transaction {txn_id} to {appservice.id}: "
+                             "no address configured")
+            return
         url = URL(appservice.address) / "_matrix" / "app" / "v1" / "transactions" / txn_id
         resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
                                    json={"events": events})

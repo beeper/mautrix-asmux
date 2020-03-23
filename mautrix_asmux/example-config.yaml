@@ -40,6 +40,8 @@ mux:
     port: 29326
     # Database URI. Currently only supports postgres://user:password@host/dbname
     database: postgres:///mautrix-asmux
+    # Shared secret for accessing the API
+    shared_secret: generate
 
 # Python logging configuration.
 #
