@@ -25,13 +25,10 @@ async def upgrade_v1(conn: Connection) -> None:
         owner  VARCHAR(32)  NOT NULL,
         prefix VARCHAR(32)  NOT NULL,
 
+        bot      VARCHAR(32)  NOT NULL,
         address  VARCHAR(255) NOT NULL,
         hs_token VARCHAR(255) NOT NULL,
         as_token VARCHAR(255) NOT NULL,
-
-        bot              VARCHAR(32)  NOT NULL,
-        bot_access_token TEXT,
-        bot_device_id    VARCHAR(255),
 
         UNIQUE (owner, prefix)
     )""")

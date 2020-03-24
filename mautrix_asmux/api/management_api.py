@@ -121,14 +121,12 @@ class ManagementAPI:
             raise Error.appservice_not_found
         return web.json_response(self._make_registration(az))
 
-    async def register_as_bot(self, owner: str, prefix: str, bot: str) -> Tuple[str, str]:
-        localpart = f"{self.global_prefix}{owner}_{prefix}_{bot}"
+    async def _register_as_bot(self, az: AppService) -> None:
+        localpart = f"{self.global_prefix}{az.owner}_{az.prefix}_{az.bot}"
         url = (self.hs_address / "_matrix/client/r0/register").with_query({"kind": "user"})
-        resp = await self.http.post(url, json={"username": localpart}, headers={
+        await self.http.post(url, json={"username": localpart}, headers={
             "Authorization": f"Bearer {self.as_token}"
         })
-        data = await resp.json()
-        return data["access_token"], data["device_id"]
 
     async def provision_appservice(self, req: web.Request) -> web.Response:
         try:
@@ -143,17 +141,15 @@ class ManagementAPI:
                 raise Error.invalid_owner
             elif not part_regex.fullmatch(prefix):
                 raise Error.invalid_prefix
-            bot = data.get("bot", "bot")
-            address = data.get("address", "")
-            try:
-                access_token, device_id = await self.register_as_bot(owner, prefix, bot)
-            except Exception:
-                self.log.exception(f"Failed to register bridge bot {owner}_{prefix}_{bot}")
-                raise Error.failed_to_register_bot
-            az = await AppService.find_or_create(owner, prefix, bot=bot, address=address,
-                                                 bot_access_token=access_token,
-                                                 bot_device_id=device_id)
-            self.log.info(f"Created appservice {owner}_{prefix}")
+            az = await AppService.find_or_create(owner, prefix, bot=data.get("bot", "bot"),
+                                                 address=data.get("address", ""))
+            if az.created_:
+                try:
+                    await self._register_as_bot(az)
+                except Exception:
+                    self.log.warning(f"Failed to register bridge bot {owner}_{prefix}_{az.bot}",
+                                     exc_info=True)
+                self.log.info(f"Created appservice {owner}_{prefix}")
         else:
             az = await AppService.get(uuid)
             if not az:
