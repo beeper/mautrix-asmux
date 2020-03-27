@@ -4,6 +4,8 @@ homeserver:
     domain: example.com
     # Client-server API URL.
     address: http://localhost:8008
+    # Shared secret for login with https://github.com/devture/matrix-synapse-shared-secret-auth
+    login_shared_secret: null
 
 # Application service registration related details.
 # Changing these values requires regeneration of the registration.

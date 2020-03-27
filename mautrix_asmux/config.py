@@ -61,6 +61,7 @@ class Config(BaseFileConfig, BaseValidatableConfig):
 
         copy("homeserver.address")
         copy("homeserver.domain")
+        copy("homeserver.login_shared_secret")
 
         copy("appservice.address")
 

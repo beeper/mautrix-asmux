@@ -24,7 +24,7 @@ from yarl import URL
 
 from mautrix.types import JSON
 
-from ..database import AppService
+from ..database import AppService, User
 from ..config import Config
 from .errors import Error
 
@@ -94,6 +94,7 @@ class ManagementAPI:
             "id": str(az.id),
             "as_token": f"{az.id}-{az.as_token}",
             "hs_token": az.hs_token,
+            "login_shared_secret": az.login_token,
             "namespaces": {
                 "users": [{
                     "regex": f"@{prefix}_.+:{server_name}",
@@ -141,8 +142,10 @@ class ManagementAPI:
                 raise Error.invalid_owner
             elif not part_regex.fullmatch(prefix):
                 raise Error.invalid_prefix
-            az = await AppService.find_or_create(owner, prefix, bot=data.get("bot", "bot"),
+            user = await User.get_or_create(owner)
+            az = await AppService.find_or_create(user, prefix, bot=data.get("bot", "bot"),
                                                  address=data.get("address", ""))
+            az.login_token = user.login_token
             if az.created_:
                 try:
                     await self._register_as_bot(az)

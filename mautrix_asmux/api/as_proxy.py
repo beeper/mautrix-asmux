@@ -64,7 +64,10 @@ class AppServiceProxy(AppServiceServerMixin):
                 return None
         except KeyError:
             return None
-        localpart: str = event["state_key"].lstrip(self.mxid_prefix).rstrip(self.mxid_suffix)
+        user_id: str = event["state_key"]
+        if not user_id or not user_id.startswith(self.mxid_prefix) or not user_id.endswith(self.mxid_suffix):
+            return None
+        localpart: str = user_id[len(self.mxid_prefix):-len(self.mxid_suffix)]
         try:
             owner, prefix, _ = localpart.split("_", 2)
         except ValueError:

@@ -22,6 +22,7 @@ from attr import dataclass
 import asyncpg
 
 from .base import Base
+from .user import User
 
 
 @dataclass
@@ -35,22 +36,28 @@ class AppService(Base):
     hs_token: str
     as_token: str
 
+    login_token: Optional[str] = None
     created_: bool = False
 
     @classmethod
     async def get(cls, id: UUID, *, conn: Optional[asyncpg.Connection] = None
                   ) -> Optional['AppService']:
         conn = conn or cls.db
-        row = await conn.fetchrow("SELECT id, owner, prefix, bot, address, hs_token, as_token "
-                                  "FROM appservice WHERE id=$1::uuid", id)
+        row = await conn.fetchrow("SELECT appservice.id AS id, owner, prefix, bot, address, "
+                                  '       hs_token, as_token, "user".login_token AS login_token '
+                                  'FROM appservice, "user" WHERE appservice.id=$1::uuid '
+                                  '                            AND "user".id=appservice.owner', id)
         return AppService(**row) if row else None
 
     @classmethod
     async def find(cls, owner: str, prefix: str, *, conn: Optional[asyncpg.Connection] = None
                    ) -> Optional['AppService']:
         conn = conn or cls.db
-        row = await conn.fetchrow("SELECT id, owner, prefix, bot, address, hs_token, as_token "
-                                  "FROM appservice WHERE owner=$1 AND prefix=$2", owner, prefix)
+        row = await conn.fetchrow("SELECT appservice.id AS id, owner, prefix, bot, address, "
+                                  '       hs_token, as_token, "user".login_token AS login_token '
+                                  'FROM appservice, "user" WHERE owner=$1 AND prefix=$2 '
+                                  '                          AND "user".id=appservice.owner',
+                                  owner, prefix)
         return AppService(**row) if row else None
 
     @staticmethod
@@ -58,17 +65,17 @@ class AppService(Base):
         return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
     @classmethod
-    async def find_or_create(cls, owner: str, prefix: str, *, bot: str = "bot", address: str = ""
+    async def find_or_create(cls, user: User, prefix: str, *, bot: str = "bot", address: str = ""
                              ) -> 'AppService':
         async with cls.db.acquire() as conn, conn.transaction():
-            az = await cls.find(owner, prefix, conn=conn)
+            az = await cls.find(user.id, prefix, conn=conn)
             if not az:
                 uuid = uuid4()
                 hs_token = cls._random(64)
                 # The input AS token also contains the UUID, so we want this to be a bit shorter
                 as_token = cls._random(27)
-                az = AppService(id=uuid, owner=owner, prefix=prefix, bot=bot, address=address,
-                                hs_token=hs_token, as_token=as_token)
+                az = AppService(id=uuid, owner=user.id, prefix=prefix, bot=bot, address=address,
+                                hs_token=hs_token, as_token=as_token, login_token=user.login_token)
                 az.created_ = True
                 await az.insert(conn=conn)
             return az

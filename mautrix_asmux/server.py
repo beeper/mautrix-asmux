@@ -48,7 +48,8 @@ class MuxServer:
 
         self.cs_proxy = ClientProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                     hs_address=URL(config["homeserver.address"]),
-                                    as_token=config["appservice.as_token"], http=self.http)
+                                    as_token=config["appservice.as_token"], http=self.http,
+                                    login_shared_secret=config["homeserver.login_shared_secret"])
         self.as_proxy = AppServiceProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                         hs_token=config["appservice.hs_token"], http=self.http,
                                         loop=self.loop)
