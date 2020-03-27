@@ -48,7 +48,8 @@ class ClientProxy:
         self.mxid_suffix = mxid_suffix
         self.hs_address = hs_address.with_path("/_matrix")
         self.as_token = as_token
-        self.login_shared_secret = login_shared_secret.encode("utf-8")
+        self.login_shared_secret = (login_shared_secret.encode("utf-8")
+                                    if login_shared_secret else None)
         self.http = http
 
         self.app = web.Application()
