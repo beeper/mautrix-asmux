@@ -1,4 +1,4 @@
 asyncpg>=0.20,<0.21
 ruamel.yaml>=0.15.35,<0.17
 aiohttp>=3,<4
-mautrix==0.5.0.beta3
+mautrix==0.5.0.beta4
