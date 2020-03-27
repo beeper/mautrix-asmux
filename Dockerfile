@@ -11,7 +11,7 @@ RUN apk add --no-cache \
 
 COPY requirements.txt /opt/mautrix-asmux/requirements.txt
 WORKDIR /opt/mautrix-asmux
-RUN pip3 install -r requirements.txt
+RUN apk add build-base python3-dev && pip3 install -r requirements.txt && apk del build-base python3-dev
 
 COPY . /opt/mautrix-asmux
 RUN apk add --no-cache git && pip3 install . && apk del git
