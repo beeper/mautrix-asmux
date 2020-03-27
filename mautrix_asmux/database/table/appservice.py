@@ -46,7 +46,7 @@ class AppService(Base):
         row = await conn.fetchrow("SELECT appservice.id AS id, owner, prefix, bot, address, "
                                   '       hs_token, as_token, "user".login_token AS login_token '
                                   'FROM appservice, "user" WHERE appservice.id=$1::uuid '
-                                  '                            AND "user".id=appservice.owner', id)
+                                  '                          AND "user".id=appservice.owner', id)
         return AppService(**row) if row else None
 
     @classmethod
