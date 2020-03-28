@@ -43,20 +43,20 @@ class AppService(Base):
     async def get(cls, id: UUID, *, conn: Optional[asyncpg.Connection] = None
                   ) -> Optional['AppService']:
         conn = conn or cls.db
-        row = await conn.fetchrow("SELECT appservice.id AS id, owner, prefix, bot, address, "
-                                  '       hs_token, as_token, "user".login_token AS login_token '
-                                  'FROM appservice, "user" WHERE appservice.id=$1::uuid '
-                                  '                          AND "user".id=appservice.owner', id)
+        row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, '
+                                  '       hs_token, as_token, "user".login_token '
+                                  'FROM appservice JOIN "user" ON "user".id=appservice.owner '
+                                  'WHERE appservice.id=$1::uuid', id)
         return AppService(**row) if row else None
 
     @classmethod
     async def find(cls, owner: str, prefix: str, *, conn: Optional[asyncpg.Connection] = None
                    ) -> Optional['AppService']:
         conn = conn or cls.db
-        row = await conn.fetchrow("SELECT appservice.id AS id, owner, prefix, bot, address, "
-                                  '       hs_token, as_token, "user".login_token AS login_token '
-                                  'FROM appservice, "user" WHERE owner=$1 AND prefix=$2 '
-                                  '                          AND "user".id=appservice.owner',
+        row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, hs_token '
+                                  '       as_token, "user".login_token '
+                                  'FROM appservice JOIN "user" ON "user".id=appservice.owner '
+                                  'WHERE owner=$1 AND prefix=$2 ',
                                   owner, prefix)
         return AppService(**row) if row else None
 
@@ -84,8 +84,10 @@ class AppService(Base):
     async def get_many(cls, ids: List[UUID], *, conn: Optional[asyncpg.Connection] = None
                        ) -> Iterable['AppService']:
         conn = conn or cls.db
-        rows = await conn.fetch("SELECT id, owner, prefix, bot, address, hs_token, as_token "
-                                "FROM appservice WHERE id = ANY($1::uuid[])", ids)
+        rows = await conn.fetch('SELECT appservice.id, owner, prefix, bot, address, hs_token,'
+                                '       as_token, "user".login_token '
+                                'FROM appservice JOIN "user" ON "user".id=appservice.owner '
+                                'WHERE appservice.id = ANY($1::uuid[])', ids)
         return (AppService(**row) for row in rows)
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:

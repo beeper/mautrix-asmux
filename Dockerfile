@@ -14,7 +14,7 @@ WORKDIR /opt/mautrix-asmux
 RUN apk add build-base python3-dev && pip3 install -r requirements.txt && apk del build-base python3-dev
 
 COPY . /opt/mautrix-asmux
-RUN apk add --no-cache git && pip3 install . && apk del git
+RUN pip3 install .
 
 ENV UID=1337 GID=1337
 VOLUME /data
