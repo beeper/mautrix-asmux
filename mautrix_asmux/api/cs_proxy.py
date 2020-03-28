@@ -58,10 +58,16 @@ class ClientProxy:
 
     async def proxy_login(self, req: web.Request) -> web.Response:
         body = await req.read()
+        headers = req.headers
         json_body = await req.json()
         if await self.convert_login_password(json_body):
-            body = json.dumps(json_body).encode("utf-8")
-        return await self._proxy(req, self.hs_address / "client/r0/login", body=body)
+            body = json.dumps(json_body)
+            headers = headers.copy()
+            headers["Content-Type"] = "application/json"
+            # TODO remove this everywhere (in _proxy)?
+            del headers["Content-Length"]
+        return await self._proxy(req, self.hs_address / "client/r0/login",
+                                 body=body, headers=headers)
 
     async def proxy(self, req: web.Request) -> web.Response:
         spec: str = req.match_info["spec"]
