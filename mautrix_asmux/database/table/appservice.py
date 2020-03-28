@@ -53,7 +53,7 @@ class AppService(Base):
     async def find(cls, owner: str, prefix: str, *, conn: Optional[asyncpg.Connection] = None
                    ) -> Optional['AppService']:
         conn = conn or cls.db
-        row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, hs_token '
+        row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, hs_token, '
                                   '       as_token, "user".login_token '
                                   'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                   'WHERE owner=$1 AND prefix=$2 ',
