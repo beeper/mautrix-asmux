@@ -128,9 +128,12 @@ class ClientProxy:
             if data["type"] != "m.login.password":
                 return False
             if not user_id:
-                if data["identifier"]["type"] != "m.id.user":
-                    return False
-                user_id = data["identifier"]["user"]
+                try:
+                    user_id = data["user"]
+                except KeyError:
+                    if data["identifier"]["type"] != "m.id.user":
+                        return False
+                    user_id = data["identifier"]["user"]
             login_token = az.login_token if az else await self._find_login_token(user_id)
             if not login_token:
                 return False
