@@ -70,6 +70,8 @@ class ManagementAPI:
         self.app.router.add_put("/appservice/{owner}/{prefix}", self.provision_appservice)
         self.app.router.add_get("/appservice/{id}", self.get_appservice)
         self.app.router.add_get("/appservice/{owner}/{prefix}", self.get_appservice)
+        self.app.router.add_delete("/appservice/{id}", self.delete_appservice)
+        self.app.router.add_delete("/appservice/{owner}/{prefix}", self.delete_appservice)
 
     @web.middleware
     async def check_auth(self, req: web.Request, handler: Handler) -> web.Response:
@@ -110,7 +112,7 @@ class ManagementAPI:
             "rate_limited": True,
         }
 
-    async def get_appservice(self, req: web.Request) -> web.Response:
+    async def _get_appservice(self, req: web.Request) -> AppService:
         try:
             uuid = req.match_info["id"]
         except KeyError:
@@ -120,7 +122,16 @@ class ManagementAPI:
             az = await AppService.get(uuid)
         if not az:
             raise Error.appservice_not_found
+        return az
+
+    async def get_appservice(self, req: web.Request) -> web.Response:
+        az = await self._get_appservice(req)
         return web.json_response(self._make_registration(az))
+
+    async def delete_appservice(self, req: web.Request) -> web.Response:
+        az = await self._get_appservice(req)
+        await az.delete()
+        return web.Response(status=204)
 
     async def _register_as_bot(self, az: AppService) -> None:
         localpart = f"{self.global_prefix}{az.owner}_{az.prefix}_{az.bot}"
