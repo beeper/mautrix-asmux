@@ -87,7 +87,7 @@ class ClientProxy:
             body = await req.read()
             json_body = await req.json()
             if await self.convert_login_password(json_body.get("auth", {}), az=az,
-                                           user_id=query["user_id"]):
+                                                 user_id=query["user_id"]):
                 body = json.dumps(json_body).encode("utf-8")
 
         return await self._proxy(req, url, headers, query, body)
