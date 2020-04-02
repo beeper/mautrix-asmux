@@ -103,7 +103,7 @@ class ManagementAPI:
                     "exclusive": self.exclusive,
                 }],
                 "aliases": [{
-                    "regex": f"@{prefix}_.+:{server_name}",
+                    "regex": f"#{prefix}_.+:{server_name}",
                     "exclusive": self.exclusive,
                 }],
             },
