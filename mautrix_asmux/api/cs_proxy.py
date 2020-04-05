@@ -152,7 +152,8 @@ class ClientProxy:
         try:
             auth = req.headers["Authorization"]
             assert auth and auth.startswith("Bearer ")
-            auth = auth.lstrip("Bearer ")
+            auth = auth[len("Bearer "):]
+            print(auth[:36], auth[37:])
             uuid = UUID(auth[:36])
             token = auth[37:]
         #except KeyError:
