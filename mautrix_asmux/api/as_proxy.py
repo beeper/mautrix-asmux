@@ -51,11 +51,18 @@ class AppServiceProxy(AppServiceServerMixin):
             self.log.warning(f"Not sending transaction {txn_id} to {appservice.id}: "
                              "no address configured")
             return
+        self.log.debug(f"Posting {len(events)} events from transaction {txn_id} to"
+                       f" {appservice.owner}_{appservice.prefix}")
         url = URL(appservice.address) / "_matrix" / "app" / "v1" / "transactions" / txn_id
-        resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
-                                   json={"events": events})
-        if resp.status >= 400:
-            self.log.warning(f"Failed to post events to {url}: {resp.status} {await resp.text()}")
+        try:
+            resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
+                                       json={"events": events})
+        except Exception:
+            self.log.warning(f"Failed to post events to {url}", exc_info=True)
+        else:
+            if resp.status >= 400:
+                self.log.warning(f"Failed to post events to {url}:"
+                                 f" {resp.status} {await resp.text()}")
 
     async def register_room(self, event: JSON) -> Optional[Room]:
         try:
@@ -65,7 +72,8 @@ class AppServiceProxy(AppServiceServerMixin):
         except KeyError:
             return None
         user_id: str = event["state_key"]
-        if not user_id or not user_id.startswith(self.mxid_prefix) or not user_id.endswith(self.mxid_suffix):
+        if ((not user_id or not user_id.startswith(self.mxid_prefix)
+             or not user_id.endswith(self.mxid_suffix))):
             return None
         localpart: str = user_id[len(self.mxid_prefix):-len(self.mxid_suffix)]
         try:
@@ -86,5 +94,5 @@ class AppServiceProxy(AppServiceServerMixin):
             if room:
                 data[room.owner].append(event)
         ids = await AppService.get_many(list(data.keys()))
-        await asyncio.gather(*[self.post_events(appservice, events, transaction_id)
-                               for appservice, events in zip(ids, data.values())], loop=self.loop)
+        self.loop.create_task(asyncio.gather(*[self.post_events(appservice, events, transaction_id)
+                                               for appservice, events in zip(ids, data.values())]))
