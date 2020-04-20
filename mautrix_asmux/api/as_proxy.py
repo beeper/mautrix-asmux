@@ -94,5 +94,5 @@ class AppServiceProxy(AppServiceServerMixin):
             if room:
                 data[room.owner].append(event)
         ids = await AppService.get_many(list(data.keys()))
-        self.loop.create_task(asyncio.gather(*[self.post_events(appservice, events, transaction_id)
+        asyncio.ensure_future(asyncio.gather(*[self.post_events(appservice, events, transaction_id)
                                                for appservice, events in zip(ids, data.values())]))
