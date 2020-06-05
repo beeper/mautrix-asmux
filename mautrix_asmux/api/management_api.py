@@ -119,7 +119,9 @@ class ManagementAPI:
 
     async def _get_appservice(self, req: web.Request) -> AppService:
         try:
-            uuid = req.match_info["id"]
+            uuid = UUID(req.match_info["id"])
+        except ValueError:
+            raise Error.invalid_uuid
         except KeyError:
             owner, prefix = req.match_info["owner"], req.match_info["prefix"]
             if "user" in req and req["user"].id != owner:
@@ -179,7 +181,9 @@ class ManagementAPI:
         except json.JSONDecodeError:
             raise Error.request_not_json
         try:
-            uuid = req.match_info["id"]
+            uuid = UUID(req.match_info["id"])
+        except ValueError:
+            raise Error.invalid_uuid
         except KeyError:
             owner, prefix = req.match_info["owner"], req.match_info["prefix"]
             if not part_regex.fullmatch(owner):

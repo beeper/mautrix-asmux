@@ -85,6 +85,11 @@ class _ErrorMeta:
             "M_BAD_REQUEST", "Appservice prefix must match [a-z0-9=.-]{1,32}"))
 
     @property
+    def invalid_uuid(self) -> web.HTTPException:
+        return web.HTTPBadRequest(**self._make_error(
+            "M_BAD_REQUEST", "Invalid UUID"))
+
+    @property
     def missing_fields(self) -> web.HTTPException:
         return web.HTTPBadRequest(**self._make_error(
             "M_BAD_REQUEST", "Missing one or more fields in request"))
