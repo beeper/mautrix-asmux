@@ -54,6 +54,16 @@ class _ErrorMeta:
                                                     "Invalid authorization token"))
 
     @property
+    def appservice_access_denied(self) -> web.HTTPException:
+        return web.HTTPUnauthorized(**self._make_error(
+            "M_UNAUTHORIZED", "You are not authorized to access that appservice"))
+
+    @property
+    def user_access_denied(self) -> web.HTTPException:
+        return web.HTTPUnauthorized(**self._make_error(
+            "M_UNAUTHORIZED", "You are not authorized to access that user"))
+
+    @property
     def invalid_user_id(self) -> web.HTTPException:
         return web.HTTPForbidden(**self._make_error(
             "M_FORBIDDEN", "Application service cannot masquerade as this local user."))
@@ -83,6 +93,11 @@ class _ErrorMeta:
     def appservice_not_found(self) -> web.HTTPException:
         return web.HTTPNotFound(**self._make_error("M_NOT_FOUND",
                                                    "Application service not found."))
+
+    @property
+    def user_not_found(self) -> web.HTTPException:
+        return web.HTTPNotFound(**self._make_error("M_NOT_FOUND",
+                                                   "User not found."))
 
     @property
     def failed_to_contact_homeserver(self) -> web.HTTPException:

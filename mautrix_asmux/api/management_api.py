@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Callable, Awaitable, Tuple
+from typing import Callable, Awaitable, Optional
 from uuid import UUID
 import logging
 import json
@@ -21,6 +21,7 @@ import re
 
 from aiohttp import web, ClientSession
 from yarl import URL
+from attr import asdict
 
 from mautrix.types import JSON
 
@@ -66,6 +67,7 @@ class ManagementAPI:
         self.http = http
 
         self.app = web.Application(middlewares=[self.check_auth])
+        self.app.router.add_get("/user/{id}", self.get_user)
         self.app.router.add_put("/appservice/{id}", self.provision_appservice)
         self.app.router.add_put("/appservice/{owner}/{prefix}", self.provision_appservice)
         self.app.router.add_get("/appservice/{id}", self.get_appservice)
@@ -86,7 +88,10 @@ class ManagementAPI:
             except KeyError:
                 raise Error.missing_auth_header
         if auth != self.shared_secret:
-            raise Error.invalid_auth_token
+            user = await User.find_by_api_token(auth)
+            if not user:
+                raise Error.invalid_auth_token
+            req["user"] = user
         return await handler(req)
 
     def _make_registration(self, az: AppService) -> JSON:
@@ -117,12 +122,40 @@ class ManagementAPI:
             uuid = req.match_info["id"]
         except KeyError:
             owner, prefix = req.match_info["owner"], req.match_info["prefix"]
+            if "user" in req and req["user"].id != owner:
+                raise Error.appservice_access_denied
             az = await AppService.find(owner, prefix)
         else:
             az = await AppService.get(uuid)
+        return self._error_wrap(req, az)
+
+    @staticmethod
+    def _error_wrap(req: web.Request, az: Optional[AppService]) -> AppService:
         if not az:
+            if "user" in req:
+                # Don't leak existence of UUIDs to users
+                raise Error.appservice_access_denied
             raise Error.appservice_not_found
+        elif "user" in req and req["user"].id != az.owner:
+            raise Error.appservice_access_denied
         return az
+
+    async def get_user(self, req: web.Request) -> web.Response:
+        find_user_id = req.match_info["id"]
+        if "user" in req:
+            user = req["user"]
+            if user.id != find_user_id:
+                raise Error.user_access_denied
+        else:
+            if req.query.get("create", "0") in ("1", "true", "t", "y", "yes"):
+                if not part_regex.fullmatch(find_user_id):
+                    raise Error.invalid_owner
+                user = await User.get_or_create(find_user_id)
+            else:
+                user = await User.get(find_user_id)
+                if not user:
+                    raise Error.user_not_found
+        return web.json_response(asdict(user))
 
     async def get_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)
@@ -153,7 +186,12 @@ class ManagementAPI:
                 raise Error.invalid_owner
             elif not part_regex.fullmatch(prefix):
                 raise Error.invalid_prefix
-            user = await User.get_or_create(owner)
+            if "user" in req:
+                user = req["user"]
+                if user.id != owner:
+                    raise Error.appservice_access_denied
+            else:
+                user = await User.get_or_create(owner)
             az = await AppService.find_or_create(user, prefix, bot=data.get("bot", "bot"),
                                                  address=data.get("address", ""))
             az.login_token = user.login_token
@@ -165,9 +203,7 @@ class ManagementAPI:
                                      exc_info=True)
                 self.log.info(f"Created appservice {owner}_{prefix}")
         else:
-            az = await AppService.get(uuid)
-            if not az:
-                raise Error.appservice_not_found
+            az = self._error_wrap(req, await AppService.get(uuid))
         if not az.created_:
             await az.set_address(data.get("address"))
         return web.json_response(self._make_registration(az), status=201 if az.created_ else 200)

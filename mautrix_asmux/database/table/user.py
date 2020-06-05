@@ -26,13 +26,22 @@ from .base import Base
 @dataclass
 class User(Base):
     id: str
+    api_token: str
     login_token: str
 
     @classmethod
     async def get(cls, id: str, *, conn: Optional[asyncpg.Connection] = None
                   ) -> Optional['User']:
         conn = conn or cls.db
-        row = await conn.fetchrow('SELECT id, login_token FROM "user" WHERE id=$1', id)
+        row = await conn.fetchrow('SELECT id, api_token, login_token FROM "user" WHERE id=$1', id)
+        return User(**row) if row else None
+
+    @classmethod
+    async def find_by_api_token(cls, api_token: str, *, conn: Optional[asyncpg.Connection] = None
+                                ) -> Optional['User']:
+        conn = conn or cls.db
+        row = await conn.fetchrow('SELECT id, api_token, login_token FROM "user" '
+                                  'WHERE api_token=$1', api_token)
         return User(**row) if row else None
 
     @staticmethod
@@ -44,15 +53,14 @@ class User(Base):
         async with cls.db.acquire() as conn, conn.transaction():
             user = await cls.get(id, conn=conn)
             if not user:
-                login_token = cls._random(64)
-                user = User(id=id, login_token=login_token)
+                user = User(id=id, api_token=cls._random(64), login_token=cls._random(64))
                 await user.insert(conn=conn)
             return user
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
-        await conn.execute('INSERT INTO "user" (id, login_token) VALUES ($1, $2)',
-                           self.id, self.login_token)
+        await conn.execute('INSERT INTO "user" (id, api_token, login_token) VALUES ($1, $2, $3)',
+                           self.id, self.api_token, self.login_token)
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
