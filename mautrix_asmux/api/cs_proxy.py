@@ -72,7 +72,7 @@ class ClientProxy:
     async def proxy(self, req: web.Request) -> web.Response:
         spec: str = req.match_info["spec"]
         path: str = req.match_info["path"]
-        url = self.hs_address / spec / path
+        url = self.hs_address.with_path(req.raw_path.split("?", 1)[0])
 
         az = await self._find_appservice(req)
         if not az:
