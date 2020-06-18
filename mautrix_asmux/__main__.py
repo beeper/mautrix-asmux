@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import sys
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, TCPConnector
 
 from mautrix.util.program import Program
 from mautrix.util.async_db import Database
@@ -68,7 +68,8 @@ class AppServiceMux(Program):
         self.server = MuxServer(self.config, http=self.client, loop=self.loop)
 
     async def _create_client(self) -> ClientSession:
-        return ClientSession(loop=self.loop)
+        conn = TCPConnector(limit=0)
+        return ClientSession(loop=self.loop, connector=conn)
 
     def prepare_config(self) -> None:
         self.config = self.config_class(self.args.config, self.args.registration,
