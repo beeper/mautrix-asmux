@@ -85,7 +85,7 @@ class AppServiceProxy(AppServiceServerMixin):
         await room.insert()
         return room
 
-    async def handle_transaction(self, transaction_id: str, events: List[JSON]) -> None:
+    async def handle_transaction(self, txn_id: str, events: List[JSON]) -> None:
         data: Dict[UUID, List[JSON]] = defaultdict(lambda: [])
         for event in events:
             room = await Room.get(event["room_id"])
@@ -93,6 +93,7 @@ class AppServiceProxy(AppServiceServerMixin):
                 room = await self.register_room(event)
             if room:
                 data[room.owner].append(event)
-        ids = await AppService.get_many(list(data.keys()))
-        asyncio.ensure_future(asyncio.gather(*[self.post_events(appservice, events, transaction_id)
-                                               for appservice, events in zip(ids, data.values())]))
+        appservices = {appservice.id: appservice for appservice
+                       in await AppService.get_many(list(data.keys()))}
+        asyncio.ensure_future(asyncio.wait([self.post_events(appservices.get(owner), evts, txn_id)
+                                            for owner, evts in data.items()]))
