@@ -13,8 +13,9 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Optional, Any, Tuple
+from typing import Optional, Any, Tuple, Callable, Awaitable
 from uuid import UUID
+import asyncio
 import logging
 import hashlib
 import hmac
@@ -30,6 +31,9 @@ from mautrix.types import UserID
 
 from ..database import AppService, User
 from .errors import Error
+
+
+Handler = Callable[[web.Request], Awaitable[web.Response]]
 
 
 class ClientProxy:
@@ -52,9 +56,17 @@ class ClientProxy:
                                     if login_shared_secret else None)
         self.http = http
 
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[self.cancel_logger])
         self.app.router.add_post("/client/r0/login", self.proxy_login)
         self.app.router.add_route(hdrs.METH_ANY, "/{spec:(client|media)}/{path:.+}", self.proxy)
+
+    @web.middleware
+    async def cancel_logger(self, req: web.Request, handler: Handler) -> web.Response:
+        try:
+            return await handler(req)
+        except asyncio.CancelledError:
+            self.log.debug(f"Proxying request {req.method} {req.url.path_qs} cancelled")
+            raise
 
     async def proxy_login(self, req: web.Request) -> web.Response:
         body = await req.read()
