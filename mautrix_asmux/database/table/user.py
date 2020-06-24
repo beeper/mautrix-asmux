@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Optional
+from typing import Optional, Dict, ClassVar
 import random
 import string
 
@@ -29,9 +29,24 @@ class User(Base):
     api_token: str
     login_token: str
 
+    cache_by_id: ClassVar[Dict[str, 'User']] = {}
+    cache_by_api_token: ClassVar[Dict[str, 'User']] = {}
+
+    def __attrs_post_init__(self) -> None:
+        self.cache_by_id[self.id] = self
+        self.cache_by_api_token[self.api_token] = self
+
+    def _delete_from_cache(self) -> None:
+        del self.cache_by_id[self.id]
+        del self.cache_by_api_token[self.api_token]
+
     @classmethod
     async def get(cls, id: str, *, conn: Optional[asyncpg.Connection] = None
                   ) -> Optional['User']:
+        try:
+            return cls.cache_by_id[id]
+        except KeyError:
+            pass
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT id, api_token, login_token FROM "user" WHERE id=$1', id)
         return User(**row) if row else None
@@ -39,6 +54,10 @@ class User(Base):
     @classmethod
     async def find_by_api_token(cls, api_token: str, *, conn: Optional[asyncpg.Connection] = None
                                 ) -> Optional['User']:
+        try:
+            return cls.cache_by_api_token[api_token]
+        except KeyError:
+            pass
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT id, api_token, login_token FROM "user" '
                                   'WHERE api_token=$1', api_token)
@@ -50,6 +69,10 @@ class User(Base):
 
     @classmethod
     async def get_or_create(cls, id: str) -> 'User':
+        try:
+            return cls.cache_by_id[id]
+        except KeyError:
+            pass
         async with cls.db.acquire() as conn, conn.transaction():
             user = await cls.get(id, conn=conn)
             if not user:
@@ -64,4 +87,5 @@ class User(Base):
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
+        self._delete_from_cache()
         await conn.execute('DELETE FROM "user" WHERE id=$1', self.id)

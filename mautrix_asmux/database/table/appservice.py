@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Optional, List, Iterable
+from typing import Optional, List, Iterable, Dict, Tuple, ClassVar
 from uuid import UUID, uuid4
 import random
 import string
@@ -39,9 +39,24 @@ class AppService(Base):
     login_token: Optional[str] = None
     created_: bool = False
 
+    cache_by_id: ClassVar[Dict[UUID, 'AppService']] = {}
+    cache_by_owner: ClassVar[Dict[Tuple[str, str], 'AppService']] = {}
+
+    def __attrs_post_init__(self) -> None:
+        self.cache_by_id[self.id] = self
+        self.cache_by_owner[(self.owner, self.prefix)] = self
+
+    def _delete_from_cache(self) -> None:
+        del self.cache_by_id[self.id]
+        del self.cache_by_owner[(self.owner, self.prefix)]
+
     @classmethod
     async def get(cls, id: UUID, *, conn: Optional[asyncpg.Connection] = None
                   ) -> Optional['AppService']:
+        try:
+            return cls.cache_by_id[id]
+        except KeyError:
+            pass
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, '
                                   '       hs_token, as_token, "user".login_token '
@@ -52,6 +67,10 @@ class AppService(Base):
     @classmethod
     async def find(cls, owner: str, prefix: str, *, conn: Optional[asyncpg.Connection] = None
                    ) -> Optional['AppService']:
+        try:
+            return cls.cache_by_owner[(owner, prefix)]
+        except KeyError:
+            pass
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, hs_token, '
                                   '       as_token, "user".login_token '
@@ -67,6 +86,10 @@ class AppService(Base):
     @classmethod
     async def find_or_create(cls, user: User, prefix: str, *, bot: str = "bot", address: str = ""
                              ) -> 'AppService':
+        try:
+            return cls.cache_by_owner[(user.id, prefix)]
+        except KeyError:
+            pass
         async with cls.db.acquire() as conn, conn.transaction():
             az = await cls.find(user.id, prefix, conn=conn)
             if not az:
@@ -108,4 +131,5 @@ class AppService(Base):
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
+        self._delete_from_cache()
         await conn.execute("DELETE FROM appservice WHERE id=$1", self.id)

@@ -78,7 +78,7 @@ class ClientProxy:
         if not az:
             return await self._proxy(req, url)
 
-        headers, query = await self._copy_data(req, az)
+        headers, query = self._copy_data(req, az)
 
         body = req.content
 
@@ -168,7 +168,7 @@ class ClientProxy:
             raise Error.invalid_auth_token
         return az
 
-    async def _copy_data(self, req: web.Request, az: AppService) -> Tuple[CIMultiDict, MultiDict]:
+    def _copy_data(self, req: web.Request, az: AppService) -> Tuple[CIMultiDict, MultiDict]:
         query = req.query.copy()
         try:
             del query["access_token"]
