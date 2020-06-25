@@ -20,6 +20,7 @@ import logging
 import hashlib
 import hmac
 import json
+import time
 
 import aiohttp
 from aiohttp import web, hdrs
@@ -62,11 +63,13 @@ class ClientProxy:
 
     @web.middleware
     async def cancel_logger(self, req: web.Request, handler: Handler) -> web.Response:
+        start = time.monotonic()
         try:
             return await handler(req)
         except asyncio.CancelledError:
+            duration = round(time.monotonic() - start, 3)
             path = req.get("proxy_path_qs", req.url.path_qs)
-            self.log.debug(f"Proxying request {req.method} {path} cancelled")
+            self.log.debug(f"Proxying request {req.method} {path} cancelled after {duration} seconds")
             raise
 
     async def proxy_login(self, req: web.Request) -> web.Response:
