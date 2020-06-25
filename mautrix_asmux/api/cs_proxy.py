@@ -68,8 +68,14 @@ class ClientProxy:
             return await handler(req)
         except asyncio.CancelledError:
             duration = round(time.monotonic() - start, 3)
-            path = req.get("proxy_path_qs", req.url.path_qs)
-            self.log.debug(f"Proxying request {req.method} {path} cancelled after {duration} seconds")
+            url = req.get("proxy_url", req.url)
+            cleaned_query = url.query.copy()
+            try:
+                del cleaned_query["access_token"]
+            except KeyError:
+                pass
+            self.log.debug(f"Proxying request {req.method} {url.with_query(cleaned_query).path_qs}"
+                           f" cancelled after {duration} seconds")
             raise
 
     async def proxy_login(self, req: web.Request) -> web.Response:
@@ -111,7 +117,7 @@ class ClientProxy:
     async def _proxy(self, req: web.Request, url: URL, headers: Optional[CIMultiDict[str]] = None,
                      query: Optional[MultiDict[str]] = None, body: Any = None) -> web.Response:
         try:
-            req["proxy_path_qs"] = url.with_query(query or req.query).path_qs
+            req["proxy_url"] = url.with_query(query or req.query)
             resp = await self.http.request(req.method, url,
                                            headers=headers or req.headers.copy(),
                                            params=query or req.query.copy(),
