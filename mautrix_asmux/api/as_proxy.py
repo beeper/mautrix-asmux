@@ -35,7 +35,7 @@ class AppServiceProxy(AppServiceServerMixin):
         self.http = http
 
     def _get_source(self, appservice: AppService, event: JSON) -> str:
-        if event.get("type", None) != "m.room.message":
+        if event.get("type", None) not in {"m.room.message", "m.room.encrypted"}:
             return "not message"
         elif event.get("sender", None) != f"@{appservice.owner}{self.mxid_suffix}":
             return "puppet"
