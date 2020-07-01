@@ -60,6 +60,8 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         copy("appservice.as_token")
         copy("appservice.hs_token")
 
+        copy("mixpanel.token")
+
         copy("mux.hostname")
         copy("mux.port")
         copy("mux.database")

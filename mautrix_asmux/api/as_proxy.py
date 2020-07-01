@@ -13,6 +13,7 @@ from mautrix.types import JSON
 from mautrix.appservice import AppServiceServerMixin
 
 from ..database import Room, AppService
+from ..mixpanel import track
 
 
 class AppServiceProxy(AppServiceServerMixin):
@@ -33,6 +34,31 @@ class AppServiceProxy(AppServiceServerMixin):
         self.hs_token = hs_token
         self.http = http
 
+    def _get_source(self, appservice: AppService, event: JSON) -> str:
+        if event.get("type", None) != "m.room.message":
+            return "not message"
+        elif event.get("sender", None) != f"@{appservice.owner}{self.mxid_suffix}":
+            return "puppet"
+        content = event.get("content")
+        if not isinstance(content, dict):
+            content = {}
+        for bridge in ("telegram", "whatsapp", "facebook", "hangouts"):
+            if content.get(f"net.maunium.{bridge}.puppet", False):
+                return "double puppet"
+        if content.get("source", None) in {"slack", "twitter", "instagram", "discord"}:
+            return "double puppet"
+        return "matrix"
+
+    async def track_events(self, appservice: AppService, events: List[JSON]) -> None:
+        for event in events:
+            source = self._get_source(appservice, event)
+            if source == "matrix":
+                await track("Outgoing Matrix event", event["sender"],
+                            bridge_type=appservice.prefix, bridge_id=str(appservice.id))
+            elif source == "double puppet":
+                await track("Outgoing remote event", event["sender"],
+                            bridge_type=appservice.prefix, bridge_id=str(appservice.id))
+
     async def post_events(self, appservice: AppService, events: List[JSON], txn_id: str) -> None:
         if not appservice.address:
             self.log.warning(f"Not sending transaction {txn_id} to {appservice.id}: "
@@ -50,6 +76,8 @@ class AppServiceProxy(AppServiceServerMixin):
             if resp.status >= 400:
                 self.log.warning(f"Failed to post events to {url}:"
                                  f" {resp.status} {await resp.text()}")
+            else:
+                await self.track_events(appservice, events)
 
     async def register_room(self, event: JSON) -> Optional[Room]:
         try:
