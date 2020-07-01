@@ -98,13 +98,16 @@ class ClientProxy:
             if await self.convert_login_password(json_body.get("auth", {}), az=az,
                                                  user_id=query["user_id"]):
                 body = json.dumps(json_body).encode("utf-8")
-        if ((spec == "client" and path.startswith("r0/rooms/")
-             and ("/send/m.room.message/" in path or "/send/m.room.encrypted/" in path)
-             and query["user_id"].startswith(f"{self.mxid_prefix}{az.owner}_{az.prefix}_")
-             and query["user_id"] != f"{self.mxid_prefix}{az.owner}_{az.prefix}_"
-                                     f"{az.bot}{self.mxid_suffix}")):
-            asyncio.ensure_future(track("Incoming remote event", f"@{az.owner}{self.mxid_suffix}",
-                                        bridge_type=az.prefix, bridge_id=str(az.id)))
+        # Disabled at least for now, incoming remote events are fairly high-traffic especially for
+        # users with big telegram accounts
+        #
+        # if ((spec == "client" and path.startswith("r0/rooms/")
+        #      and ("/send/m.room.message/" in path or "/send/m.room.encrypted/" in path)
+        #      and query["user_id"].startswith(f"{self.mxid_prefix}{az.owner}_{az.prefix}_")
+        #      and query["user_id"] != f"{self.mxid_prefix}{az.owner}_{az.prefix}_"
+        #                              f"{az.bot}{self.mxid_suffix}")):
+        #     asyncio.ensure_future(track("Incoming remote event", f"@{az.owner}{self.mxid_suffix}",
+        #                                 bridge_type=az.prefix, bridge_id=str(az.id)))
 
         return await self._proxy(req, url, headers, query, body)
 

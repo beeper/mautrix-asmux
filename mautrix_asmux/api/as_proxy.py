@@ -42,6 +42,11 @@ class AppServiceProxy(AppServiceServerMixin):
         content = event.get("content")
         if not isinstance(content, dict):
             content = {}
+        relates_to = event.get("m.relates_to")
+        if not isinstance(relates_to, dict):
+            relates_to = {}
+        if relates_to.get("rel_type", None) == "m.replace":
+            return "edit"
         for bridge in ("telegram", "whatsapp", "facebook", "hangouts"):
             if content.get(f"net.maunium.{bridge}.puppet", False):
                 return "double puppet"
