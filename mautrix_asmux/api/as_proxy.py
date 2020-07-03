@@ -5,6 +5,7 @@ from collections import defaultdict
 from uuid import UUID
 import logging
 import asyncio
+import time
 
 import aiohttp
 from yarl import URL
@@ -34,11 +35,14 @@ class AppServiceProxy(AppServiceServerMixin):
         self.hs_token = hs_token
         self.http = http
 
-    def _get_source(self, appservice: AppService, event: JSON) -> str:
-        if event.get("type", None) not in {"m.room.message", "m.room.encrypted"}:
-            return "not message"
+    def _get_tracking_event_type(self, appservice: AppService, event: JSON) -> Optional[str]:
+        limit = int(time.time() * 1000) - 5 * 60 * 1000
+        if event.get("origin_server_ts", limit) < limit:
+            return None # message is too old
+        elif event.get("type", None) not in {"m.room.message", "m.room.encrypted"}:
+            return None # not a message
         elif event.get("sender", None) != f"@{appservice.owner}{self.mxid_suffix}":
-            return "puppet"
+            return None # message isn't from the user
         content = event.get("content")
         if not isinstance(content, dict):
             content = {}
@@ -46,22 +50,19 @@ class AppServiceProxy(AppServiceServerMixin):
         if not isinstance(relates_to, dict):
             relates_to = {}
         if relates_to.get("rel_type", None) == "m.replace":
-            return "edit"
+            return None # message is an edit
         for bridge in ("telegram", "whatsapp", "facebook", "hangouts"):
             if content.get(f"net.maunium.{bridge}.puppet", False):
-                return "double puppet"
+                return "Outgoing remote event"
         if content.get("source", None) in {"slack", "twitter", "instagram", "discord"}:
-            return "double puppet"
-        return "matrix"
+            return "Outgoing remote event"
+        return "Outgoing Matrix event"
 
     async def track_events(self, appservice: AppService, events: List[JSON]) -> None:
         for event in events:
-            source = self._get_source(appservice, event)
-            if source == "matrix":
-                await track("Outgoing Matrix event", event["sender"],
-                            bridge_type=appservice.prefix, bridge_id=str(appservice.id))
-            elif source == "double puppet":
-                await track("Outgoing remote event", event["sender"],
+            event_type = self._get_tracking_event_type(appservice, event)
+            if event_type:
+                await track(event_type, event["sender"],
                             bridge_type=appservice.prefix, bridge_id=str(appservice.id))
 
     async def post_events(self, appservice: AppService, events: List[JSON], txn_id: str) -> None:
