@@ -55,12 +55,16 @@ class ManagementAPI:
 
         self.app = web.Application(middlewares=[self.check_auth])
         self.app.router.add_get("/user/{id}", self.get_user)
+        self.app.router.add_put("/user/{id}", self.put_user)
         self.app.router.add_put("/appservice/{id}", self.provision_appservice)
         self.app.router.add_put("/appservice/{owner}/{prefix}", self.provision_appservice)
         self.app.router.add_get("/appservice/{id}", self.get_appservice)
         self.app.router.add_get("/appservice/{owner}/{prefix}", self.get_appservice)
         self.app.router.add_delete("/appservice/{id}", self.delete_appservice)
         self.app.router.add_delete("/appservice/{owner}/{prefix}", self.delete_appservice)
+
+        self.public_app = web.Application()
+        self.public_app.router.add_get("/user/{id}", self.get_user_public)
 
     @web.middleware
     async def check_auth(self, req: web.Request, handler: Handler) -> web.Response:
@@ -129,6 +133,16 @@ class ManagementAPI:
             raise Error.appservice_access_denied
         return az
 
+    async def get_user_public(self, req: web.Request) -> web.Response:
+        find_user_id = req.match_info["id"]
+        user = await User.get(find_user_id)
+        if not user:
+            raise Error.user_not_found
+        return web.json_response({
+            "id": user.id,
+            "manager_url": user.manager_url,
+        })
+
     async def get_user(self, req: web.Request) -> web.Response:
         find_user_id = req.match_info["id"]
         if "user" in req:
@@ -144,6 +158,23 @@ class ManagementAPI:
                 user = await User.get(find_user_id)
                 if not user:
                     raise Error.user_not_found
+        return web.json_response(asdict(user))
+
+    async def put_user(self, req: web.Request) -> web.Response:
+        try:
+            data = await req.json()
+        except json.JSONDecodeError:
+            raise Error.request_not_json
+        find_user_id = req.match_info["id"]
+        if "user" in req:
+            user = req["user"]
+            if user.id != find_user_id:
+                raise Error.user_access_denied
+        else:
+            if not part_regex.fullmatch(find_user_id):
+                raise Error.invalid_owner
+            user = await User.get_or_create(find_user_id)
+        await user.edit(manager_url=data["manager_url"])
         return web.json_response(asdict(user))
 
     async def get_appservice(self, req: web.Request) -> web.Response:

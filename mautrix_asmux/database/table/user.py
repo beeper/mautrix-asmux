@@ -15,6 +15,7 @@ class User(Base):
     id: str
     api_token: str
     login_token: str
+    manager_url: Optional[str]
 
     cache_by_id: ClassVar[Dict[str, 'User']] = {}
     cache_by_api_token: ClassVar[Dict[str, 'User']] = {}
@@ -35,7 +36,8 @@ class User(Base):
         except KeyError:
             pass
         conn = conn or cls.db
-        row = await conn.fetchrow('SELECT id, api_token, login_token FROM "user" WHERE id=$1', id)
+        row = await conn.fetchrow('SELECT id, api_token, login_token, manager_url '
+                                  'FROM "user" WHERE id=$1', id)
         return User(**row) if row else None
 
     @classmethod
@@ -46,7 +48,7 @@ class User(Base):
         except KeyError:
             pass
         conn = conn or cls.db
-        row = await conn.fetchrow('SELECT id, api_token, login_token FROM "user" '
+        row = await conn.fetchrow('SELECT id, api_token, login_token, manager_url FROM "user" '
                                   'WHERE api_token=$1', api_token)
         return User(**row) if row else None
 
@@ -63,14 +65,21 @@ class User(Base):
         async with cls.db.acquire() as conn, conn.transaction():
             user = await cls.get(id, conn=conn)
             if not user:
-                user = User(id=id, api_token=cls._random(64), login_token=cls._random(64))
+                user = User(id=id, api_token=cls._random(64), login_token=cls._random(64),
+                            manager_url=None)
                 await user.insert(conn=conn)
             return user
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
-        await conn.execute('INSERT INTO "user" (id, api_token, login_token) VALUES ($1, $2, $3)',
-                           self.id, self.api_token, self.login_token)
+        await conn.execute('INSERT INTO "user" (id, api_token, login_token, manager_url) '
+                           'VALUES ($1, $2, $3)', self.id, self.api_token, self.login_token,
+                           self.manager_url)
+
+    async def edit(self, manager_url: str, *, conn: Optional[asyncpg.Connection] = None) -> None:
+        conn = conn or self.db
+        await conn.execute('UPDATE "user" SET manager_url=$1 WHERE id=$2', manager_url, self.id)
+        self.manager_url = manager_url
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
