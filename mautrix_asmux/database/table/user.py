@@ -73,7 +73,7 @@ class User(Base):
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
         await conn.execute('INSERT INTO "user" (id, api_token, login_token, manager_url) '
-                           'VALUES ($1, $2, $3)', self.id, self.api_token, self.login_token,
+                           'VALUES ($1, $2, $3, $4)', self.id, self.api_token, self.login_token,
                            self.manager_url)
 
     async def edit(self, manager_url: str, *, conn: Optional[asyncpg.Connection] = None) -> None:
