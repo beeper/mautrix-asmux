@@ -65,6 +65,7 @@ class ManagementAPI:
 
         self.public_app = web.Application()
         self.public_app.router.add_get("/user/{id}", self.get_user_public)
+        self.public_app.router.add_get("/user/{id}/redirect", self.redirect_user_public)
 
     @web.middleware
     async def check_auth(self, req: web.Request, handler: Handler) -> web.Response:
@@ -144,6 +145,13 @@ class ManagementAPI:
         }, headers={
             "Access-Control-Allow-Origin": "*",
         })
+
+    async def redirect_user_public(self, req: web.Request) -> None:
+        find_user_id = req.match_info["id"]
+        user = await User.get(find_user_id)
+        if not user:
+            raise Error.user_not_found
+        raise web.HTTPFound(location=URL(user.manager_url).with_query(req.query))
 
     async def get_user(self, req: web.Request) -> web.Response:
         find_user_id = req.match_info["id"]
