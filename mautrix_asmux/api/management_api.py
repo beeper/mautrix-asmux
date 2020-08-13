@@ -2,6 +2,7 @@
 # Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
 from typing import Callable, Awaitable, Optional
 from uuid import UUID
+import os.path
 import logging
 import json
 import re
@@ -66,6 +67,7 @@ class ManagementAPI:
         self.public_app = web.Application()
         self.public_app.router.add_get("/user/{id}", self.get_user_public)
         self.public_app.router.add_get("/user/{id}/redirect", self.redirect_user_public)
+        self.public_app.router.add_get("/user/{id}/redirect/{target:.*}", self.redirect_user_public)
 
     @web.middleware
     async def check_auth(self, req: web.Request, handler: Handler) -> web.Response:
@@ -151,7 +153,13 @@ class ManagementAPI:
         user = await User.get(find_user_id)
         if not user:
             raise Error.user_not_found
-        raise web.HTTPFound(location=URL(user.manager_url).with_query(req.query))
+        url = URL(user.manager_url)
+        try:
+            url = url.with_path(os.path.join(url.path, req.match_info["target"]))
+        except KeyError:
+            pass
+        url = url.with_query(req.query)
+        raise web.HTTPFound(url)
 
     async def get_user(self, req: web.Request) -> web.Response:
         find_user_id = req.match_info["id"]
