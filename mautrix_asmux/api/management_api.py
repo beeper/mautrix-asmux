@@ -141,6 +141,8 @@ class ManagementAPI:
         return web.json_response({
             "id": user.id,
             "manager_url": user.manager_url,
+        }, headers={
+            "Access-Control-Allow-Origin": "*",
         })
 
     async def get_user(self, req: web.Request) -> web.Response:
