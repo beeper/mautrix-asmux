@@ -1,6 +1,8 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
-from typing import Optional, Any, Tuple, Callable, Awaitable
+from typing import Optional, Any, Tuple, Callable, Awaitable, Dict, List, Union
+from contextlib import asynccontextmanager
+from collections import defaultdict
 from uuid import UUID
 import asyncio
 import logging
@@ -15,13 +17,18 @@ from yarl import URL
 from multidict import CIMultiDict, MultiDict
 
 from mautrix.client import ClientAPI
-from mautrix.types import UserID
+from mautrix.types import UserID, RoomID, EventType
 
 from ..database import AppService, User
-from ..mixpanel import track
 from .errors import Error
 
 Handler = Callable[[web.Request], Awaitable[web.Response]]
+
+
+class HTTPCustomError(web.HTTPError):
+    def __init__(self, status_code: int, *args, **kwargs) -> None:
+        self.status_code = status_code
+        super().__init__(*args, **kwargs)
 
 
 class ClientProxy:
@@ -34,6 +41,9 @@ class ClientProxy:
     as_token: str
     login_shared_secret: Optional[bytes]
 
+    dm_locks: Dict[UserID, asyncio.Lock]
+    user_ids: Dict[str, UserID]
+
     def __init__(self, mxid_prefix: str, mxid_suffix: str, hs_address: URL, as_token: str,
                  login_shared_secret: Optional[str], http: aiohttp.ClientSession) -> None:
         self.mxid_prefix = mxid_prefix
@@ -42,10 +52,14 @@ class ClientProxy:
         self.as_token = as_token
         self.login_shared_secret = (login_shared_secret.encode("utf-8")
                                     if login_shared_secret else None)
+        self.dm_locks = defaultdict(lambda: asyncio.Lock())
+        self.user_ids = {}
         self.http = http
 
         self.app = web.Application(middlewares=[self.cancel_logger])
         self.app.router.add_post("/client/r0/login", self.proxy_login)
+        self.app.router.add_put("/client/unstable/net.maunium.asmux/dms", self.update_dms)
+        self.app.router.add_patch("/client/unstable/net.maunium.asmux/dms", self.update_dms)
         self.app.router.add_route(hdrs.METH_ANY, "/{spec:(client|media)}/{path:.+}", self.proxy)
 
     @web.middleware
@@ -64,6 +78,77 @@ class ClientProxy:
             self.log.debug(f"Proxying request {req.method} {url.with_query(cleaned_query).path_qs}"
                            f" cancelled after {duration} seconds")
             raise
+
+    @asynccontextmanager
+    async def _get(self, url: URL, auth: str) -> web.Response:
+        try:
+            async with self.http.get(url, headers={"Authorization": f"Bearer {auth}"}) as resp:
+                if resp.status >= 400:
+                    raise HTTPCustomError(status_code=resp.status, headers=resp.headers,
+                                          body=await resp.read())
+                yield resp
+        except aiohttp.ClientError:
+            raise Error.failed_to_contact_homeserver
+
+    @asynccontextmanager
+    async def _put(self, url: URL, auth: str, json: Dict[str, Any]) -> web.Response:
+        try:
+            async with self.http.put(url, headers={"Authorization": f"Bearer {auth}"}, json=json
+                                     ) as resp:
+                if resp.status >= 400:
+                    raise HTTPCustomError(status_code=resp.status, headers=resp.headers,
+                                          body=await resp.read())
+                yield resp
+        except aiohttp.ClientError:
+            raise Error.failed_to_contact_homeserver
+
+    async def _get_user_id(self, token: str) -> UserID:
+        token_hash = hashlib.sha512(token.encode("utf-8")).hexdigest()
+        try:
+            return self.user_ids[token_hash]
+        except KeyError:
+            url = self.hs_address / "client" / "r0" / "account" / "whoami"
+            async with self._get(url, token) as resp:
+                user_id = self.user_ids[token_hash] = (await resp.json())["user_id"]
+            return user_id
+
+    def _remove_current_dms(self, dms: Dict[UserID, List[RoomID]], username: str, bridge: str
+                            ) -> Dict[UserID, List[RoomID]]:
+        prefix = f"{self.mxid_prefix}{username}_{bridge}_"
+        suffix = self.mxid_suffix
+        bot = f"{prefix}bot{suffix}"
+
+        return {user_id: rooms for user_id, rooms in dms.items()
+                if not (user_id.startswith(prefix) and user_id.endswith(suffix)
+                        and user_id != bot)}
+
+    async def update_dms(self, req: web.Request) -> web.Response:
+        try:
+            auth = req.headers["Authorization"]
+            assert auth.startswith("Bearer ")
+            auth = auth[len("Bearer "):]
+        except (KeyError, AssertionError):
+            raise Error.invalid_auth_header
+        try:
+            data = await req.json()
+        except json.JSONDecodeError:
+            raise Error.request_not_json
+
+        user_id = await self._get_user_id(auth)
+        az = await self._find_appservice(req, header="X-Asmux-Auth", raise_errors=True)
+        if user_id != f"@{az.owner}{self.mxid_suffix}":
+            raise Error.mismatching_user
+
+        async with self.dm_locks[user_id]:
+            url = (self.hs_address / "client" / "r0"
+                   / "user" / user_id / "account_data" / str(EventType.DIRECT))
+            async with self._get(url, auth) as resp:
+                dms = await resp.json()
+            if req.method == "PUT":
+                dms = self._remove_current_dms(dms, az.owner, az.prefix)
+            dms.update(data)
+            async with self._put(url, auth, dms):
+                return web.json_response({})
 
     async def proxy_login(self, req: web.Request) -> web.Response:
         body = await req.read()
@@ -168,20 +253,23 @@ class ClientProxy:
         return False
 
     @staticmethod
-    async def _find_appservice(req: web.Request) -> Optional[AppService]:
+    async def _find_appservice(req: web.Request, header: str = "Authorization",
+                               raise_errors: bool = False) -> Optional[AppService]:
         try:
-            auth = req.headers["Authorization"]
-            assert auth and auth.startswith("Bearer ")
-            auth = auth[len("Bearer "):]
+            auth = req.headers[header]
+            assert auth
+            if not header.startswith("X-"):
+                assert auth.startswith("Bearer ")
+                auth = auth[len("Bearer "):]
             uuid = UUID(auth[:36])
             token = auth[37:]
-        #except KeyError:
-        #    raise Error.missing_auth_header
-        #except AssertionError:
-        #    raise Error.invalid_auth_header
-        #except ValueError:
-        #    raise Error.invalid_auth_token
-        except (KeyError, AssertionError, ValueError):
+        except (KeyError, AssertionError):
+            if raise_errors:
+                raise Error.missing_auth_header
+            return None
+        except ValueError:
+            if raise_errors:
+                raise Error.invalid_auth_token
             return None
         az = await AppService.get(uuid)
         if not az or az.as_token != token:

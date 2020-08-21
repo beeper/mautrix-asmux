@@ -82,6 +82,16 @@ class _ErrorMeta:
             "M_BAD_REQUEST", "Missing one or more fields in request"))
 
     @property
+    def bridge_query_required(self) -> web.HTTPException:
+        return web.HTTPBadRequest(**self._make_error(
+            "M_BAD_REQUEST", "`bridge` query param is required"))
+
+    @property
+    def mismatching_user(self) -> web.HTTPException:
+        return web.HTTPBadRequest(**self._make_error(
+            "M_FORBIDDEN", "Application service shouldn't have that user's access token"))
+
+    @property
     def appservice_not_found(self) -> web.HTTPException:
         return web.HTTPNotFound(**self._make_error("M_NOT_FOUND",
                                                    "Application service not found."))
