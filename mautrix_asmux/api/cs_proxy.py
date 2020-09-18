@@ -154,6 +154,9 @@ class ClientProxy:
         body = await req.read()
         headers = req.headers
         json_body = await req.json()
+        if json_body.get("type") != "m.login.password":
+            return await self.proxy(req, _spec_override="client", _path_override="r0/login",
+                                    _body_override=body)
         if await self.convert_login_password(json_body):
             body = json.dumps(json_body)
             headers = headers.copy()
@@ -163,9 +166,10 @@ class ClientProxy:
         return await self._proxy(req, self.hs_address / "client/r0/login",
                                  body=body, headers=headers)
 
-    async def proxy(self, req: web.Request) -> web.Response:
-        spec: str = req.match_info["spec"]
-        path: str = req.match_info["path"]
+    async def proxy(self, req: web.Request, *, _spec_override: str = "", _path_override: str = "",
+                    _body_override: Any = None) -> web.Response:
+        spec: str = _spec_override or req.match_info["spec"]
+        path: str = _path_override or req.match_info["path"]
         url = self.hs_address.with_path(req.raw_path.split("?", 1)[0])
 
         az = await self._find_appservice(req)
@@ -174,7 +178,7 @@ class ClientProxy:
 
         headers, query = self._copy_data(req, az)
 
-        body = req.content
+        body = _body_override or req.content
 
         if spec == "client" and ((path == "r0/delete_devices" and req.method == "POST")
                                  or (path.startswith("r0/devices/") and req.method == "DELETE")):
