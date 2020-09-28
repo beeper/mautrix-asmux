@@ -62,6 +62,17 @@ class ClientProxy:
         self.app.router.add_patch("/client/unstable/net.maunium.asmux/dms", self.update_dms)
         self.app.router.add_route(hdrs.METH_ANY, "/{spec:(client|media)}/{path:.+}", self.proxy)
 
+    @staticmethod
+    def request_log_fmt(req: web.Request) -> str:
+        url = req.get("proxy_url", req.url)
+        proxy_for = req.get("proxy_for", "<unknown user>")
+        cleaned_query = url.query.copy()
+        try:
+            del cleaned_query["access_token"]
+        except KeyError:
+            pass
+        return f"{req.method} {url.with_query(cleaned_query).path_qs} for {proxy_for}"
+
     @web.middleware
     async def cancel_logger(self, req: web.Request, handler: Handler) -> web.Response:
         start = time.monotonic()
@@ -69,13 +80,7 @@ class ClientProxy:
             return await handler(req)
         except asyncio.CancelledError:
             duration = round(time.monotonic() - start, 3)
-            url = req.get("proxy_url", req.url)
-            cleaned_query = url.query.copy()
-            try:
-                del cleaned_query["access_token"]
-            except KeyError:
-                pass
-            self.log.debug(f"Proxying request {req.method} {url.with_query(cleaned_query).path_qs}"
+            self.log.debug(f"Proxying request {self.request_log_fmt(req)}"
                            f" cancelled after {duration} seconds")
             raise
 
@@ -174,7 +179,9 @@ class ClientProxy:
 
         az = await self._find_appservice(req)
         if not az:
+            req["proxy_for"] = "<no auth>"
             return await self._proxy(req, url)
+        req["proxy_for"] = f"{az.owner}/{az.prefix}"
 
         headers, query = self._copy_data(req, az)
 
@@ -208,8 +215,11 @@ class ClientProxy:
                                            headers=headers or req.headers.copy(),
                                            params=query or req.query.copy(),
                                            data=body or req.content)
-        except aiohttp.ClientError:
+        except aiohttp.ClientError as e:
+            self.log.debug(f"ClientError proxying request {self.request_log_fmt(req)}: {e}")
             raise Error.failed_to_contact_homeserver
+        if resp.status >= 400:
+            self.log.debug(f"Got HTTP {resp.status} proxying request {self.request_log_fmt(req)}")
         return web.Response(status=resp.status, headers=resp.headers, body=resp.content)
 
     async def _find_login_token(self, user_id: UserID) -> Optional[str]:
