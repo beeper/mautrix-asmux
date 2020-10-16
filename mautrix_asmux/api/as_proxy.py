@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, NamedTuple
 from collections import defaultdict
 from uuid import UUID
 import logging
@@ -15,6 +15,9 @@ from mautrix.appservice import AppServiceServerMixin
 
 from ..database import Room, AppService
 from ..mixpanel import track
+
+
+Events = NamedTuple('Events', pdu=List[JSON], edu=List[JSON])
 
 
 class AppServiceProxy(AppServiceServerMixin):
@@ -58,24 +61,24 @@ class AppServiceProxy(AppServiceServerMixin):
             return "Outgoing remote event"
         return "Outgoing Matrix event"
 
-    async def track_events(self, appservice: AppService, events: List[JSON]) -> None:
-        for event in events:
+    async def track_events(self, appservice: AppService, events: Events) -> None:
+        for event in events.pdu:
             event_type = self._get_tracking_event_type(appservice, event)
             if event_type:
                 await track(event_type, event["sender"],
                             bridge_type=appservice.prefix, bridge_id=str(appservice.id))
 
-    async def post_events(self, appservice: AppService, events: List[JSON], txn_id: str) -> None:
+    async def post_events(self, appservice: AppService, events: Events, txn_id: str) -> None:
         if not appservice.address:
             self.log.warning(f"Not sending transaction {txn_id} to {appservice.id}: "
                              "no address configured")
             return
-        self.log.debug(f"Posting {len(events)} events from transaction {txn_id} to"
-                       f" {appservice.owner}_{appservice.prefix}")
-        url = URL(appservice.address) / "_matrix" / "app" / "v1" / "transactions" / txn_id
+        self.log.debug(f"Posting {len(events.pdu)} PDUs and {len(events.edu)} EDUs from "
+                       f"transaction {txn_id} to {appservice.owner}/{appservice.prefix}")
+        url = URL(appservice.address) / "_matrix/app/v1/transactions" / txn_id
         try:
             resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
-                                       json={"events": events})
+                                       json={"events": events.pdu, "ephemeral": events.edu})
         except Exception:
             self.log.warning(f"Failed to post events to {url}", exc_info=True)
         else:
@@ -106,14 +109,24 @@ class AppServiceProxy(AppServiceServerMixin):
         await room.insert()
         return room
 
-    async def handle_transaction(self, txn_id: str, events: List[JSON]) -> None:
-        data: Dict[UUID, List[JSON]] = defaultdict(lambda: [])
+    async def handle_transaction(self, txn_id: str, events: List[JSON],
+                                 ephemeral: Optional[List[JSON]] = None) -> None:
+        data: Dict[UUID, Events] = defaultdict(lambda: Events([], []))
         for event in events:
             room = await Room.get(event["room_id"])
             if not room:
                 room = await self.register_room(event)
             if room:
-                data[room.owner].append(event)
+                data[room.owner].pdu.append(event)
+        for event in ephemeral or []:
+            room_id = event.get("room_id")
+            if room_id:
+                room = await Room.get(room_id)
+                if room:
+                    data[room.owner].edu.append(event)
+            elif event.get("type") == "m.presence":
+                # TODO find all appservices that care about the sender's presence.
+                pass
         appservices = {appservice.id: appservice for appservice
                        in await AppService.get_many(list(data.keys()))}
         asyncio.ensure_future(asyncio.wait([self.post_events(appservices.get(owner), evts, txn_id)
