@@ -180,7 +180,7 @@ class ClientProxy:
         az = await self._find_appservice(req)
         if not az:
             req["proxy_for"] = "<no auth>"
-            return await self._proxy(req, url)
+            return await self._proxy(req, url, body=_body_override)
         req["proxy_for"] = f"{az.owner}/{az.prefix}"
 
         headers, query = self._copy_data(req, az)
@@ -216,7 +216,7 @@ class ClientProxy:
                                            params=query or req.query.copy(),
                                            data=body or req.content)
         except aiohttp.ClientError as e:
-            self.log.debug(f"ClientError proxying request {self.request_log_fmt(req)}: {e}")
+            self.log.debug(f"{type(e)} proxying request {self.request_log_fmt(req)}: {e}")
             raise Error.failed_to_contact_homeserver
         if resp.status >= 400:
             self.log.debug(f"Got HTTP {resp.status} proxying request {self.request_log_fmt(req)}")
