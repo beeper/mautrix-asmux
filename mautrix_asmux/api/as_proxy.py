@@ -31,7 +31,7 @@ class AppServiceProxy(AppServiceServerMixin):
 
     def __init__(self, mxid_prefix: str, mxid_suffix: str, hs_token: str,
                  http: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop) -> None:
-        super().__init__()
+        super().__init__(ephemeral_events=True)
         self.loop = loop
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix

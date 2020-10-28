@@ -96,5 +96,7 @@ class Config(BaseFileConfig, BaseValidatableConfig):
             },
             "url": self["appservice.address"],
             "sender_localpart": self["appservice.bot_username"],
-            "rate_limited": False
+            "rate_limited": False,
+            "push_ephemeral": True,
+            "de.sorunome.msc2409.push_ephemeral": True,
         }

@@ -175,7 +175,7 @@ class ClientProxy:
                     _body_override: Any = None) -> web.Response:
         spec: str = _spec_override or req.match_info["spec"]
         path: str = _path_override or req.match_info["path"]
-        url = self.hs_address.with_path(req.raw_path.split("?", 1)[0])
+        url = self.hs_address.with_path(req.raw_path.split("?", 1)[0], encoded=True)
 
         az = await self._find_appservice(req)
         if not az:
