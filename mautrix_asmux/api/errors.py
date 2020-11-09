@@ -13,7 +13,7 @@ class _ErrorMeta:
     @staticmethod
     def _make_error(errcode: str, error: str) -> Dict[str, str]:
         return {
-            "body": json.dumps({
+            "text": json.dumps({
                 "error": error,
                 "errcode": errcode,
             }),
