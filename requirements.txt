@@ -4,3 +4,6 @@ aiohttp>=3,<4
 mautrix>=0.8,<0.9
 yarl>=1,<2
 multidict<5
+attrs
+cryptography
+bcrypt

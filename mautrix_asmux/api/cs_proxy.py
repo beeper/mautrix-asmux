@@ -107,13 +107,16 @@ class ClientProxy:
         except aiohttp.ClientError:
             raise Error.failed_to_contact_homeserver
 
-    async def _get_user_id(self, token: str) -> UserID:
+    async def get_user_id(self, token: str) -> Optional[UserID]:
         token_hash = hashlib.sha512(token.encode("utf-8")).hexdigest()
         try:
             return self.user_ids[token_hash]
         except KeyError:
             url = self.hs_address / "client" / "r0" / "account" / "whoami"
             async with self._get(url, token) as resp:
+                # TODO handle other errors?
+                if resp.status == 401:
+                    raise Error.invalid_auth_token
                 user_id = self.user_ids[token_hash] = (await resp.json())["user_id"]
             return user_id
 
@@ -139,7 +142,7 @@ class ClientProxy:
         except json.JSONDecodeError:
             raise Error.request_not_json
 
-        user_id = await self._get_user_id(auth)
+        user_id = await self.get_user_id(auth)
         az = await self._find_appservice(req, header="X-Asmux-Auth", raise_errors=True)
         if user_id != f"@{az.owner}{self.mxid_suffix}":
             raise Error.mismatching_user

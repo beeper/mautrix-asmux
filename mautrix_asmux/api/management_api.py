@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
-from typing import Callable, Awaitable, Optional
+from typing import Callable, Awaitable, Optional, TYPE_CHECKING
 from uuid import UUID
 import os.path
 import logging
@@ -9,13 +9,16 @@ import re
 
 from aiohttp import web, ClientSession
 from yarl import URL
-from attr import asdict
 
 from mautrix.types import JSON
+from mautrix.client import ClientAPI
 
 from ..database import AppService, User
 from ..config import Config
 from .errors import Error
+
+if TYPE_CHECKING:
+    from ..server import MuxServer
 
 part_regex = re.compile("^[a-z0-9=.-]{1,32}$")
 
@@ -36,6 +39,7 @@ def custom_dumps(*args, **kwargs):
 class ManagementAPI:
     log: logging.Logger = logging.getLogger("mau.api.management")
     http: ClientSession
+    server: 'MuxServer'
 
     global_prefix: str
     exclusive: bool
@@ -44,7 +48,7 @@ class ManagementAPI:
     hs_address: URL
     as_token: str
 
-    def __init__(self, config: Config, http: ClientSession) -> None:
+    def __init__(self, config: Config, http: ClientSession, server: 'MuxServer') -> None:
         self.global_prefix = config["appservice.namespace.prefix"]
         self.exclusive = config["appservice.namespace.exclusive"]
         self.server_name = config["homeserver.domain"]
@@ -53,10 +57,13 @@ class ManagementAPI:
         self.as_token = config["appservice.as_token"]
 
         self.http = http
+        self.server = server
 
         self.app = web.Application(middlewares=[self.check_auth])
         self.app.router.add_get("/user/{id}", self.get_user)
         self.app.router.add_put("/user/{id}", self.put_user)
+        self.app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
+        self.app.router.add_put("/user/{id}/proxy", self.put_user_proxy)
         self.app.router.add_put("/appservice/{id}", self.provision_appservice)
         self.app.router.add_put("/appservice/{owner}/{prefix}", self.provision_appservice)
         self.app.router.add_get("/appservice/{id}", self.get_appservice)
@@ -67,7 +74,11 @@ class ManagementAPI:
         self.public_app = web.Application()
         self.public_app.router.add_get("/user/{id}", self.get_user_public)
         self.public_app.router.add_get("/user/{id}/redirect", self.redirect_user_public)
-        self.public_app.router.add_get("/user/{id}/redirect/{target:.*}", self.redirect_user_public)
+        self.public_app.router.add_get("/user/{id}/redirect/{target:.*}",
+                                       self.redirect_user_public)
+
+        self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
+        self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
 
     @web.middleware
     async def check_auth(self, req: web.Request, handler: Handler) -> web.Response:
@@ -77,15 +88,33 @@ class ManagementAPI:
                 raise Error.invalid_auth_header
             auth = auth[len("Bearer "):]
         except KeyError:
-            try:
-                auth = req.query["access_token"]
-            except KeyError:
-                raise Error.missing_auth_header
+            raise Error.missing_auth_header
         if auth != self.shared_secret:
             user = await User.find_by_api_token(auth)
             if not user:
                 raise Error.invalid_auth_token
             req["user"] = user
+            req["user_direct_auth"] = False
+        return await handler(req)
+
+    @web.middleware
+    async def check_mx_auth(self, req: web.Request, handler: Handler) -> web.Response:
+        try:
+            auth = req.headers["Authorization"]
+            if not auth.startswith("Bearer "):
+                raise Error.invalid_auth_header
+            auth = auth[len("Bearer "):]
+        except KeyError:
+            raise Error.missing_auth_header
+        if auth != self.shared_secret:
+            user_id = await self.server.cs_proxy.get_user_id(auth)
+            # We can ignore the server name since get_user_id will only use the local server
+            localpart, _ = ClientAPI.parse_user_id(user_id)
+            user = await User.get(localpart)
+            if not user:
+                raise Error.user_not_found
+            req["user"] = user
+            req["user_direct_auth"] = True
         return await handler(req)
 
     def _make_registration(self, az: AppService) -> JSON:
@@ -161,14 +190,15 @@ class ManagementAPI:
         url = url.with_query(req.query)
         raise web.HTTPFound(url)
 
-    async def get_user(self, req: web.Request) -> web.Response:
+    @staticmethod
+    async def _get_user(req: web.Request, allow_create: bool) -> User:
         find_user_id = req.match_info["id"]
         if "user" in req:
             user = req["user"]
             if user.id != find_user_id:
                 raise Error.user_access_denied
         else:
-            if req.query.get("create", "0") in ("1", "true", "t", "y", "yes"):
+            if allow_create:
                 if not part_regex.fullmatch(find_user_id):
                     raise Error.invalid_owner
                 user = await User.get_or_create(find_user_id)
@@ -176,24 +206,50 @@ class ManagementAPI:
                 user = await User.get(find_user_id)
                 if not user:
                     raise Error.user_not_found
-        return web.json_response(asdict(user))
+        return user
+
+    async def get_user(self, req: web.Request) -> web.Response:
+        allow_create = req.query.get("create", "0") in ("1", "true", "t", "y", "yes")
+        user = await self._get_user(req, allow_create=allow_create)
+        return web.json_response(user.to_dict())
 
     async def put_user(self, req: web.Request) -> web.Response:
         try:
             data = await req.json()
         except json.JSONDecodeError:
             raise Error.request_not_json
-        find_user_id = req.match_info["id"]
-        if "user" in req:
-            user = req["user"]
-            if user.id != find_user_id:
-                raise Error.user_access_denied
-        else:
-            if not part_regex.fullmatch(find_user_id):
-                raise Error.invalid_owner
-            user = await User.get_or_create(find_user_id)
+        user = await self._get_user(req, allow_create=True)
         await user.edit(manager_url=data["manager_url"])
-        return web.json_response(asdict(user))
+        return web.json_response(user.to_dict())
+
+    async def get_user_proxy(self, req: web.Request) -> web.Response:
+        user = await self._get_user(req, allow_create=False)
+        if not user.proxy_config:
+            raise Error.proxy_not_setup
+        proxy_cfg_resp = user.proxy_config_response(include_private_key=req["user_direct_auth"])
+        return web.json_response(proxy_cfg_resp)
+
+    async def put_user_proxy(self, req: web.Request) -> web.Response:
+        try:
+            data = await req.json()
+        except json.JSONDecodeError:
+            raise Error.request_not_json
+        user = await self._get_user(req, allow_create=False)
+        proxy_config = user.proxy_config
+        if not proxy_config or req.query.get("regenerate", "false").lower() in ("1", "t", "true"):
+            proxy_config = {
+                "socks": user.generate_socks_config(),
+                "ssh": user.generate_ssh_key(),
+            }
+        proxy_config["ssh"] = {
+            **data,
+            "publicKey": proxy_config["ssh"]["publicKey"],
+            "privateKey": proxy_config["ssh"]["privateKey"],
+            "passphrase": proxy_config["ssh"]["passphrase"],
+        }
+        await user.edit(proxy_config=proxy_config)
+        proxy_cfg_resp = user.proxy_config_response(include_private_key=False)
+        return web.json_response(proxy_cfg_resp)
 
     async def get_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)

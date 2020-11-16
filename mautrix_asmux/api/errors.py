@@ -102,6 +102,11 @@ class _ErrorMeta:
                                                    "User not found."))
 
     @property
+    def proxy_not_setup(self) -> web.HTTPException:
+        return web.HTTPNotFound(**self._make_error("M_NOT_FOUND",
+                                                   "Proxy config not set."))
+
+    @property
     def failed_to_contact_homeserver(self) -> web.HTTPException:
         return web.HTTPBadGateway(**self._make_error("M_BAD_GATEWAY",
                                                      "Failed to contact homeserver"))
