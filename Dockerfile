@@ -1,10 +1,12 @@
-FROM docker.io/alpine:3.11
+FROM docker.io/alpine:3.12
 
 RUN apk add --no-cache \
       py3-aiohttp \
       py3-ruamel.yaml \
       py3-attrs \
       py3-idna \
+      py3-cryptography \
+      py3-bcrypt \
       # Other dependencies
       ca-certificates \
       su-exec
