@@ -24,7 +24,9 @@ class ProxySSHConfig(SSHKey, TypedDict):
     host: str
     port: int
     username: str
-    hostKey: str
+    hostKeySha256: str
+    forwardPort: int
+    forwardHost: str
 
 
 class ProxySOCKSConfig(TypedDict):
