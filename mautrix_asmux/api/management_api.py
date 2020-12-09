@@ -115,7 +115,9 @@ class ManagementAPI:
                 raise Error.user_not_found
             req["user"] = user
             req["user_direct_auth"] = True
-        return await handler(req)
+        resp = await handler(req)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
 
     def _make_registration(self, az: AppService) -> JSON:
         prefix = f"{re.escape(self.global_prefix)}{re.escape(az.owner)}_{re.escape(az.prefix)}"
