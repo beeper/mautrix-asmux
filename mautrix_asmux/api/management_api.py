@@ -80,6 +80,12 @@ class ManagementAPI:
         self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
         self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
 
+        self._mxauth_cors = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        }
+
     @web.middleware
     async def check_auth(self, req: web.Request, handler: Handler) -> web.Response:
         try:
@@ -99,6 +105,8 @@ class ManagementAPI:
 
     @web.middleware
     async def check_mx_auth(self, req: web.Request, handler: Handler) -> web.Response:
+        if req.method == "OPTIONS":
+            return web.Response(headers=self._mxauth_cors)
         try:
             auth = req.headers["Authorization"]
             if not auth.startswith("Bearer "):
@@ -116,7 +124,7 @@ class ManagementAPI:
             req["user"] = user
             req["user_direct_auth"] = True
         resp = await handler(req)
-        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers.update(self._mxauth_cors)
         return resp
 
     def _make_registration(self, az: AppService) -> JSON:
