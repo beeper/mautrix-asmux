@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
-from typing import Optional, Any, Tuple, Callable, Awaitable, Dict, List, Union
+from typing import Optional, Any, Tuple, Callable, Awaitable, Dict, List, Mapping
 from contextlib import asynccontextmanager
 from collections import defaultdict
 from uuid import UUID
@@ -26,9 +26,11 @@ Handler = Callable[[web.Request], Awaitable[web.Response]]
 
 
 class HTTPCustomError(web.HTTPError):
-    def __init__(self, status_code: int, *args, **kwargs) -> None:
+    def __init__(self, status_code: int, headers: Mapping[str, str], *args, **kwargs) -> None:
         self.status_code = status_code
-        super().__init__(*args, **kwargs)
+        headers = {**headers}
+        headers.pop("Transfer-Encoding")
+        super().__init__(*args, **kwargs, headers=headers)
 
 
 class ClientProxy:
@@ -85,10 +87,10 @@ class ClientProxy:
             raise
 
     @asynccontextmanager
-    async def _get(self, url: URL, auth: str) -> web.Response:
+    async def _get(self, url: URL, auth: str, raise_error: bool = True) -> web.Response:
         try:
             async with self.http.get(url, headers={"Authorization": f"Bearer {auth}"}) as resp:
-                if resp.status >= 400:
+                if raise_error and resp.status >= 400:
                     raise HTTPCustomError(status_code=resp.status, headers=resp.headers,
                                           body=await resp.read())
                 yield resp
@@ -113,9 +115,9 @@ class ClientProxy:
             return self.user_ids[token_hash]
         except KeyError:
             url = self.hs_address / "client" / "r0" / "account" / "whoami"
-            async with self._get(url, token) as resp:
+            async with self._get(url, token, raise_error=False) as resp:
                 # TODO handle other errors?
-                if resp.status == 401:
+                if resp.status in (401, 403):
                     raise Error.invalid_auth_token
                 user_id = self.user_ids[token_hash] = (await resp.json())["user_id"]
             return user_id
