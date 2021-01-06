@@ -56,14 +56,17 @@ class User(Base):
     cache_by_api_token: ClassVar[Dict[str, 'User']] = {}
 
     def __attrs_post_init__(self) -> None:
-        self.cache_by_id[self.id] = self
-        self.cache_by_api_token[self.api_token] = self
         if self.proxy_config and isinstance(self.proxy_config, str):
             self.proxy_config = json.loads(self.proxy_config)
 
     def _delete_from_cache(self) -> None:
         del self.cache_by_id[self.id]
         del self.cache_by_api_token[self.api_token]
+
+    def _add_to_cache(self) -> 'User':
+        self.cache_by_id[self.id] = self
+        self.cache_by_api_token[self.api_token] = self
+        return self
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -114,7 +117,7 @@ class User(Base):
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT id, api_token, login_token, manager_url, proxy_config '
                                   'FROM "user" WHERE id=$1', id)
-        return User(**row) if row else None
+        return User(**row)._add_to_cache() if row else None
 
     @classmethod
     async def find_by_api_token(cls, api_token: str, *, conn: Optional[asyncpg.Connection] = None
@@ -126,7 +129,7 @@ class User(Base):
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT id, api_token, login_token, manager_url, proxy_config '
                                   'FROM "user" WHERE api_token=$1', api_token)
-        return User(**row) if row else None
+        return User(**row)._add_to_cache() if row else None
 
     @staticmethod
     def _random(length: int) -> str:
@@ -147,12 +150,13 @@ class User(Base):
             return user
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
-        self.log.info(f"Creating new user {self.id}")
         conn = conn or self.db
         q = ('INSERT INTO "user" (id, api_token, login_token, manager_url, proxy_config) '
              'VALUES ($1, $2, $3, $4)')
         await conn.execute(q, self.id, self.api_token, self.login_token, self.manager_url,
                            json.dumps(self.proxy_config) if self.proxy_config else None)
+        self._add_to_cache()
+        self.log.info(f"Created user {self.id}")
 
     async def edit(self, manager_url: str = unset, proxy_config: Optional[ProxyConfig] = unset, *,
                    conn: Optional[asyncpg.Connection] = None) -> None:

@@ -29,9 +29,10 @@ class AppService(Base):
     cache_by_id: ClassVar[Dict[UUID, 'AppService']] = {}
     cache_by_owner: ClassVar[Dict[Tuple[str, str], 'AppService']] = {}
 
-    def __attrs_post_init__(self) -> None:
+    def _add_to_cache(self) -> 'AppService':
         self.cache_by_id[self.id] = self
         self.cache_by_owner[(self.owner, self.prefix)] = self
+        return self
 
     def _delete_from_cache(self) -> None:
         del self.cache_by_id[self.id]
@@ -49,7 +50,7 @@ class AppService(Base):
                                   '       hs_token, as_token, "user".login_token '
                                   'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                   'WHERE appservice.id=$1::uuid', id)
-        return AppService(**row) if row else None
+        return AppService(**row)._add_to_cache() if row else None
 
     @classmethod
     async def find(cls, owner: str, prefix: str, *, conn: Optional[asyncpg.Connection] = None
@@ -64,7 +65,7 @@ class AppService(Base):
                                   'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                   'WHERE owner=$1 AND prefix=$2 ',
                                   owner, prefix)
-        return AppService(**row) if row else None
+        return AppService(**row)._add_to_cache() if row else None
 
     @staticmethod
     def _random(length: int) -> str:
@@ -98,7 +99,7 @@ class AppService(Base):
                                 '       as_token, "user".login_token '
                                 'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                 'WHERE appservice.id = ANY($1::uuid[])', ids)
-        return (AppService(**row) for row in rows)
+        return (AppService(**row)._add_to_cache() for row in rows)
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
@@ -107,6 +108,7 @@ class AppService(Base):
                            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
                            self.id, self.owner, self.prefix, self.bot, self.address,
                            self.hs_token, self.as_token)
+        self._add_to_cache()
 
     async def set_address(self, address: str, *,
                           conn: Optional[asyncpg.Connection] = None) -> None:
