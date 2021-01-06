@@ -106,6 +106,7 @@ class AppServiceProxy(AppServiceServerMixin):
             return None
         az = await AppService.find(owner, prefix)
         room = Room(id=event["room_id"], owner=az.id)
+        self.log.debug(f"Registering {az.owner}/{az.prefix} ({az.id}) as the owner of {room.id}")
         await room.insert()
         return room
 
@@ -113,11 +114,14 @@ class AppServiceProxy(AppServiceServerMixin):
                                  ephemeral: Optional[List[JSON]] = None) -> None:
         data: Dict[UUID, Events] = defaultdict(lambda: Events([], []))
         for event in events:
-            room = await Room.get(event["room_id"])
+            room_id = event["room_id"]
+            room = await Room.get(room_id)
             if not room:
                 room = await self.register_room(event)
             if room:
                 data[room.owner].pdu.append(event)
+            else:
+                self.log.warning(f"No target found for event in {room_id}")
         for event in ephemeral or []:
             room_id = event.get("room_id")
             if room_id:

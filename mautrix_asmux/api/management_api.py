@@ -307,7 +307,7 @@ class ManagementAPI:
                 except Exception:
                     self.log.warning(f"Failed to register bridge bot {owner}_{prefix}_{az.bot}",
                                      exc_info=True)
-                self.log.info(f"Created appservice {owner}_{prefix}")
+                self.log.info(f"Created appservice {owner}/{prefix} ({az.id})")
         else:
             az = self._error_wrap(req, await AppService.get(uuid))
         if not az.created_:

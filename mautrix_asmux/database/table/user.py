@@ -1,6 +1,7 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
 from typing import Optional, Dict, ClassVar, TypedDict
+import logging
 import random
 import string
 import json
@@ -44,6 +45,7 @@ unset = object()
 
 @dataclass
 class User(Base):
+    log = logging.getLogger("mau.db.user")
     id: str
     api_token: str
     login_token: str
@@ -145,6 +147,7 @@ class User(Base):
             return user
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
+        self.log.info(f"Creating new user {self.id}")
         conn = conn or self.db
         q = ('INSERT INTO "user" (id, api_token, login_token, manager_url, proxy_config) '
              'VALUES ($1, $2, $3, $4)')

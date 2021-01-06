@@ -223,7 +223,7 @@ class ClientProxy:
         except aiohttp.ClientError as e:
             self.log.debug(f"{type(e)} proxying request {self.request_log_fmt(req)}: {e}")
             raise Error.failed_to_contact_homeserver
-        if resp.status >= 400:
+        if resp.status >= 400 and resp.status not in (401, 403):
             self.log.debug(f"Got HTTP {resp.status} proxying request {self.request_log_fmt(req)}")
         return web.Response(status=resp.status, headers=resp.headers, body=resp.content)
 
