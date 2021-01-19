@@ -152,8 +152,14 @@ class ClientProxy:
         async with self.dm_locks[user_id]:
             url = (self.hs_address / "client" / "r0"
                    / "user" / user_id / "account_data" / str(EventType.DIRECT))
-            async with self._get(url, auth) as resp:
-                dms = await resp.json()
+            try:
+                async with self._get(url, auth) as resp:
+                    dms = await resp.json()
+            except HTTPCustomError as e:
+                if e.status_code == 404:
+                    dms = {}
+                else:
+                    raise
             if req.method == "PUT":
                 dms = self._remove_current_dms(dms, az.owner, az.prefix)
             dms.update(data)
