@@ -299,7 +299,8 @@ class ManagementAPI:
             else:
                 user = await User.get_or_create(owner)
             az = await AppService.find_or_create(user, prefix, bot=data.get("bot", "bot"),
-                                                 address=data.get("address", ""))
+                                                 address=data.get("address", ""),
+                                                 push=data.get("push", True))
             az.login_token = user.login_token
             if az.created_:
                 try:
@@ -312,4 +313,7 @@ class ManagementAPI:
             az = self._error_wrap(req, await AppService.get(uuid))
         if not az.created_:
             await az.set_address(data.get("address"))
-        return web.json_response(self._make_registration(az), status=201 if az.created_ else 200)
+            await az.set_push(data.get("push"))
+        status = 201 if az.created_ else 200
+        az.created_ = False
+        return web.json_response(self._make_registration(az), status=status)

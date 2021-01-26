@@ -22,12 +22,17 @@ class AppService(Base):
     address: str
     hs_token: str
     as_token: str
+    push: bool
 
     login_token: Optional[str] = None
     created_: bool = False
 
     cache_by_id: ClassVar[Dict[UUID, 'AppService']] = {}
     cache_by_owner: ClassVar[Dict[Tuple[str, str], 'AppService']] = {}
+
+    @property
+    def name(self) -> str:
+        return f"{self.owner}/{self.prefix}"
 
     def _add_to_cache(self) -> 'AppService':
         self.cache_by_id[self.id] = self
@@ -47,7 +52,7 @@ class AppService(Base):
             pass
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, '
-                                  '       hs_token, as_token, "user".login_token '
+                                  '       hs_token, as_token, push, "user".login_token '
                                   'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                   'WHERE appservice.id=$1::uuid', id)
         return AppService(**row)._add_to_cache() if row else None
@@ -61,7 +66,7 @@ class AppService(Base):
             pass
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, hs_token, '
-                                  '       as_token, "user".login_token '
+                                  '       as_token, push, "user".login_token '
                                   'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                   'WHERE owner=$1 AND prefix=$2 ',
                                   owner, prefix)
@@ -72,8 +77,8 @@ class AppService(Base):
         return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
     @classmethod
-    async def find_or_create(cls, user: User, prefix: str, *, bot: str = "bot", address: str = ""
-                             ) -> 'AppService':
+    async def find_or_create(cls, user: User, prefix: str, *, bot: str = "bot", address: str = "",
+                             push: bool = True) -> 'AppService':
         try:
             return cls.cache_by_owner[(user.id, prefix)]
         except KeyError:
@@ -86,7 +91,8 @@ class AppService(Base):
                 # The input AS token also contains the UUID, so we want this to be a bit shorter
                 as_token = cls._random(27)
                 az = AppService(id=uuid, owner=user.id, prefix=prefix, bot=bot, address=address,
-                                hs_token=hs_token, as_token=as_token, login_token=user.login_token)
+                                hs_token=hs_token, as_token=as_token, push=push,
+                                login_token=user.login_token)
                 az.created_ = True
                 await az.insert(conn=conn)
             return az
@@ -96,7 +102,7 @@ class AppService(Base):
                        ) -> Iterable['AppService']:
         conn = conn or cls.db
         rows = await conn.fetch('SELECT appservice.id, owner, prefix, bot, address, hs_token,'
-                                '       as_token, "user".login_token '
+                                '       as_token, push, "user".login_token '
                                 'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                 'WHERE appservice.id = ANY($1::uuid[])', ids)
         return (AppService(**row)._add_to_cache() for row in rows)
@@ -104,19 +110,25 @@ class AppService(Base):
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
         await conn.execute("INSERT INTO appservice "
-                           "(id, owner, prefix, bot, address, hs_token, as_token) "
-                           "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                           "(id, owner, prefix, bot, address, hs_token, as_token, push) "
+                           "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                            self.id, self.owner, self.prefix, self.bot, self.address,
-                           self.hs_token, self.as_token)
+                           self.hs_token, self.as_token, self.push)
         self._add_to_cache()
 
     async def set_address(self, address: str, *,
                           conn: Optional[asyncpg.Connection] = None) -> None:
-        if not address or self.address == address:
+        if address is None or self.address == address:
             return
         self.address = address
         conn = conn or self.db
         await conn.execute("UPDATE appservice SET address=$2 WHERE id=$1", self.id, self.address)
+
+    async def set_push(self, push: bool) -> None:
+        if push is None or push == self.push:
+            return
+        self.push = push
+        await self.db.execute("UPDATE appservice SET push=$2 WHERE id=$1", self.id, self.push)
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db

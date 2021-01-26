@@ -73,5 +73,9 @@ class AppServiceMux(Program):
         await self.server.start()
         await super().start()
 
+    async def stop(self) -> None:
+        await self.server.stop()
+        await super().stop()
+
 
 AppServiceMux().run()

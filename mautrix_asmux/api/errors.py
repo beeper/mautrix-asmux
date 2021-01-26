@@ -46,6 +46,12 @@ class _ErrorMeta:
             "M_UNAUTHORIZED", "You are not authorized to access that appservice"))
 
     @property
+    def appservice_ws_not_enabled(self) -> web.HTTPException:
+        return web.HTTPUnauthorized(**self._make_error(
+            "FI.MAU.TXN_WS_NOT_ENABLED", "This appservice is not marked to use websocket for "
+                                         "receiving transactions."))
+
+    @property
     def user_access_denied(self) -> web.HTTPException:
         return web.HTTPUnauthorized(**self._make_error(
             "M_UNAUTHORIZED", "You are not authorized to access that user"))

@@ -47,7 +47,8 @@ class ClientProxy:
     user_ids: Dict[str, UserID]
 
     def __init__(self, mxid_prefix: str, mxid_suffix: str, hs_address: URL, as_token: str,
-                 login_shared_secret: Optional[str], http: aiohttp.ClientSession) -> None:
+                 login_shared_secret: Optional[str], http: aiohttp.ClientSession, as_sync: Handler
+                 ) -> None:
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
         self.hs_address = hs_address.with_path("/_matrix")
@@ -62,6 +63,7 @@ class ClientProxy:
         self.app.router.add_post("/client/r0/login", self.proxy_login)
         self.app.router.add_put("/client/unstable/net.maunium.asmux/dms", self.update_dms)
         self.app.router.add_patch("/client/unstable/net.maunium.asmux/dms", self.update_dms)
+        self.app.router.add_get("/client/unstable/fi.mau.as_sync", as_sync)
         self.app.router.add_route(hdrs.METH_ANY, "/{spec:(client|media)}/{path:.+}", self.proxy)
 
     @staticmethod
@@ -145,7 +147,7 @@ class ClientProxy:
             raise Error.request_not_json
 
         user_id = await self.get_user_id(auth)
-        az = await self._find_appservice(req, header="X-Asmux-Auth", raise_errors=True)
+        az = await self.find_appservice(req, header="X-Asmux-Auth", raise_errors=True)
         if user_id != f"@{az.owner}{self.mxid_suffix}":
             raise Error.mismatching_user
 
@@ -188,7 +190,7 @@ class ClientProxy:
         path: str = _path_override or req.match_info["path"]
         url = self.hs_address.with_path(req.raw_path.split("?", 1)[0], encoded=True)
 
-        az = await self._find_appservice(req)
+        az = await self.find_appservice(req)
         if not az:
             req["proxy_for"] = "<no auth>"
             return await self._proxy(req, url, body=_body_override)
@@ -278,8 +280,8 @@ class ClientProxy:
         return False
 
     @staticmethod
-    async def _find_appservice(req: web.Request, header: str = "Authorization",
-                               raise_errors: bool = False) -> Optional[AppService]:
+    async def find_appservice(req: web.Request, header: str = "Authorization",
+                              raise_errors: bool = False) -> Optional[AppService]:
         try:
             auth = req.headers[header]
             assert auth

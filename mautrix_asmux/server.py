@@ -33,13 +33,14 @@ class MuxServer:
         self.loop = loop or asyncio.get_event_loop()
         self.http = http or aiohttp.ClientSession(loop=self.loop)
 
-        self.cs_proxy = ClientProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
-                                    hs_address=URL(config["homeserver.address"]),
-                                    as_token=config["appservice.as_token"], http=self.http,
-                                    login_shared_secret=config["homeserver.login_shared_secret"])
         self.as_proxy = AppServiceProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                         hs_token=config["appservice.hs_token"], http=self.http,
                                         loop=self.loop)
+        self.cs_proxy = ClientProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
+                                    hs_address=URL(config["homeserver.address"]),
+                                    as_token=config["appservice.as_token"], http=self.http,
+                                    login_shared_secret=config["homeserver.login_shared_secret"],
+                                    as_sync=self.as_proxy.sync)
         self.management_api = ManagementAPI(config=config, http=self.http, server=self)
 
         self.app = web.Application()
@@ -57,5 +58,6 @@ class MuxServer:
         await site.start()
 
     async def stop(self) -> None:
+        await self.as_proxy.stop()
         self.log.debug("Stopping web server")
         await self.runner.cleanup()
