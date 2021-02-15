@@ -60,4 +60,6 @@ class MuxServer:
     async def stop(self) -> None:
         await self.as_proxy.stop()
         self.log.debug("Stopping web server")
+        await self.runner.shutdown()
         await self.runner.cleanup()
+        self.log.debug("Stopped web server")
