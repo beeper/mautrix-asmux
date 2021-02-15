@@ -1,14 +1,14 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
-from typing import Optional, List, Dict, NamedTuple
-from collections import defaultdict
+from typing import Optional, List, Dict, NamedTuple, Deque
+from collections import defaultdict, deque
 from uuid import UUID
 import logging
 import asyncio
 import time
 
 from yarl import URL
-from aiohttp import web
+from aiohttp import web, ClientError
 from aiohttp.http import WSMessage, WSMsgType, WSCloseCode
 import aiohttp
 
@@ -16,11 +16,11 @@ from mautrix.types import JSON
 from mautrix.appservice import AppServiceServerMixin
 
 from ..database import Room, AppService
-from ..mixpanel import track
+from ..posthog import track
 from .cs_proxy import ClientProxy
 from .errors import Error
 
-Events = NamedTuple('Events', pdu=List[JSON], edu=List[JSON])
+Events = NamedTuple('Events', txn_id=str, pdu=List[JSON], edu=List[JSON])
 
 
 class AppServiceProxy(AppServiceServerMixin):
@@ -32,6 +32,7 @@ class AppServiceProxy(AppServiceServerMixin):
     mxid_prefix: str
     mxid_suffix: str
     websockets: Dict[UUID, web.WebSocketResponse]
+    locks: Dict[UUID, asyncio.Lock]
 
     def __init__(self, mxid_prefix: str, mxid_suffix: str, hs_token: str,
                  http: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop) -> None:
@@ -42,6 +43,7 @@ class AppServiceProxy(AppServiceServerMixin):
         self.hs_token = hs_token
         self.http = http
         self.websockets = {}
+        self.locks = defaultdict(lambda: asyncio.Lock())
 
     async def stop(self) -> None:
         self.log.debug("Disconnecting websockets")
@@ -109,48 +111,67 @@ class AppServiceProxy(AppServiceServerMixin):
                 await track(event_type, event["sender"],
                             bridge_type=appservice.prefix, bridge_id=str(appservice.id))
 
-    async def _post_events_ws(self, appservice: AppService, events: Events, txn_id: str) -> None:
+    async def _post_events_ws(self, appservice: AppService, events: Events) -> bool:
         try:
             ws = self.websockets[appservice.id]
         except KeyError:
             # TODO buffer transactions
-            self.log.warning(f"Not sending transaction {txn_id} to {appservice.name}: "
+            self.log.warning(f"Not sending transaction {events.txn_id} to {appservice.name}: "
                              f"websocket not connected")
-            return
-        self.log.debug(f"Posting {len(events.pdu)} PDUs and {len(events.edu)} EDUs from "
-                       f"transaction {txn_id} to {appservice.name} through websocket")
+            return False
+        self.log.debug(f"Sending transaction {events.txn_id} to {appservice.name} via websocket")
         await ws.send_json({
             "status": "ok",
-            "txn_id": txn_id,
+            "txn_id": events.txn_id,
             "events": events.pdu,
             "ephemeral": events.edu,
         })
+        return True
 
-    async def _post_events_http(self, appservice: AppService, events: Events, txn_id: str) -> None:
-        self.log.debug(f"Posting {len(events.pdu)} PDUs and {len(events.edu)} EDUs from "
-                       f"transaction {txn_id} to {appservice.name}")
-        url = URL(appservice.address) / "_matrix/app/v1/transactions" / txn_id
-        try:
-            resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
-                                       json={"events": events.pdu, "ephemeral": events.edu})
-        except Exception:
-            self.log.warning(f"Failed to post events to {url}", exc_info=True)
-        else:
-            if resp.status >= 400:
-                self.log.warning(f"Failed to post events to {url}:"
-                                 f" {resp.status} {await resp.text()}")
+    async def _post_events_http(self, appservice: AppService, events: Events) -> bool:
+        attempt = 0
+        url = URL(appservice.address) / "_matrix/app/v1/transactions" / events.txn_id
+        err_prefix = (f"Failed to send transaction {events.txn_id} "
+                      f"({len(events.pdu)}p/{len(events.edu)}e) to {url}")
+        retries = 10 if len(events.pdu) > 0 else 2
+        while attempt < retries:
+            attempt += 1
+            self.log.debug(f"Sending transaction {events.txn_id} to {appservice.name} "
+                           f"via HTTP, attempt #{attempt}")
+            try:
+                resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
+                                           json={"events": events.pdu, "ephemeral": events.edu})
+            except ClientError as e:
+                self.log.warning(f"{err_prefix}: {e}")
+            except Exception:
+                self.log.exception(f"{err_prefix}")
+                break
             else:
-                await self.track_events(appservice, events)
+                if resp.status >= 400:
+                    self.log.warning(f"{err_prefix}: HTTP {resp.status}: {await resp.text()!r}")
+                else:
+                    return True
+            await asyncio.sleep(1)
+        self.log.warning(f"Gave up trying to send {events.txn_id} to {appservice.name}")
+        return False
 
-    async def post_events(self, appservice: AppService, events: Events, txn_id: str) -> None:
-        if not appservice.push:
-            await self._post_events_ws(appservice, events, txn_id)
-        elif appservice.address:
-            await self._post_events_http(appservice, events, txn_id)
-        else:
-            self.log.warning(f"Not sending transaction {txn_id} to {appservice.name}: "
-                             "no address configured")
-            return
+    async def post_events(self, appservice: AppService, events: Events) -> None:
+        async with self.locks[appservice.id]:
+            ok = False
+            try:
+                if not appservice.push:
+                    ok = await self._post_events_ws(appservice, events)
+                elif appservice.address:
+                    ok = await self._post_events_http(appservice, events)
+                else:
+                    self.log.warning(f"Not sending transaction {events.txn_id} "
+                                     f"to {appservice.name}: no address configured")
+            except Exception:
+                self.log.exception(f"Fatal error sending transaction {events.txn_id} "
+                                   f"to {appservice.name}")
+            if ok:
+                self.log.debug(f"Successfully sent {events.txn_id} to {appservice.name}")
+                self.loop.create_task(self.track_events(appservice, events))
 
     async def register_room(self, event: JSON) -> Optional[Room]:
         try:
@@ -176,7 +197,9 @@ class AppServiceProxy(AppServiceServerMixin):
 
     async def handle_transaction(self, txn_id: str, events: List[JSON],
                                  ephemeral: Optional[List[JSON]] = None) -> None:
-        data: Dict[UUID, Events] = defaultdict(lambda: Events([], []))
+        self.log.debug(f"Received transaction {txn_id} with {len(events)} PDUs "
+                       f"and {len(ephemeral)} EDUs")
+        data: Dict[UUID, Events] = defaultdict(lambda: Events(txn_id, [], []))
         for event in events:
             room_id = event["room_id"]
             room = await Room.get(room_id)
@@ -195,7 +218,8 @@ class AppServiceProxy(AppServiceServerMixin):
             elif event.get("type") == "m.presence":
                 # TODO find all appservices that care about the sender's presence.
                 pass
-        appservices = {appservice.id: appservice for appservice
-                       in await AppService.get_many(list(data.keys()))}
-        asyncio.ensure_future(asyncio.wait([self.post_events(appservices.get(owner), evts, txn_id)
-                                            for owner, evts in data.items()]))
+        for appservice_id, events in data.items():
+            appservice = await AppService.get(appservice_id)
+            self.log.debug(f"Preparing to send {len(events.pdu)} PDUs and {len(events.edu)} EDUs "
+                           f"from transaction {events.txn_id} to {appservice.name}")
+            self.loop.create_task(self.post_events(appservice, events))
