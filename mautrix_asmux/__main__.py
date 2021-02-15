@@ -11,7 +11,7 @@ from . import __version__
 from .config import Config
 from .server import MuxServer
 from .database import Base, upgrade_table
-from .mixpanel import init as init_mixpanel
+from .posthog import init as init_posthog
 
 
 class AppServiceMux(Program):
@@ -54,8 +54,9 @@ class AppServiceMux(Program):
         Base.db = self.database
         self.client = self.loop.run_until_complete(self._create_client())
         self.server = MuxServer(self.config, http=self.client, loop=self.loop)
-        if self.config["mixpanel.token"]:
-            init_mixpanel(self.config["mixpanel.token"], self.client)
+        if self.config["posthog.token"]:
+            init_posthog(self.config["posthog.token"], self.config["posthog.host"],
+                          self.client)
 
     async def _create_client(self) -> ClientSession:
         conn = TCPConnector(limit=0)

@@ -33,9 +33,9 @@ appservice:
         # Whether or not the prefix should be exclusively for asmux (and the services behind it).
         exclusive: true
 
-mixpanel:
-    # Mixpanel token for tracking messages flowing through. Tracking is disabled if token is null.
+posthog:
     token: null
+    host: app.posthog.com
 
 # Main mautrix-asmux settings
 mux:
