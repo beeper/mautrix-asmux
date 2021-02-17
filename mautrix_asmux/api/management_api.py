@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 part_regex = re.compile("^[a-z0-9=.-]{1,32}$")
 
 Handler = Callable[[web.Request], Awaitable[web.Response]]
+AuthCallback = Callable[[web.Request, str], Awaitable[None]]
 
 
 class UUIDEncoder(json.JSONEncoder):
@@ -80,14 +81,16 @@ class ManagementAPI:
         self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
         self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
 
-        self._mxauth_cors = {
+        self._cors = {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "Authorization, Content-Type",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         }
 
-    @web.middleware
-    async def check_auth(self, req: web.Request, handler: Handler) -> web.Response:
+    async def _check_auth_generic(self, req: web.Request, handler: Handler, callback: AuthCallback
+                                  ) -> web.Response:
+        if req.method == "OPTIONS":
+            return web.Response(headers=self._cors)
         try:
             auth = req.headers["Authorization"]
             if not auth.startswith("Bearer "):
@@ -96,36 +99,36 @@ class ManagementAPI:
         except KeyError:
             raise Error.missing_auth_header
         if auth != self.shared_secret:
-            user = await User.find_by_api_token(auth)
-            if not user:
-                raise Error.invalid_auth_token
-            req["user"] = user
-            req["user_direct_auth"] = False
-        return await handler(req)
+            await callback(req, auth)
+        resp = await handler(req)
+        resp.headers.update(self._cors)
+        return resp
+
+    @staticmethod
+    async def _normal_auth_callback(req: web.Request, auth: str) -> None:
+        user = await User.find_by_api_token(auth)
+        if not user:
+            raise Error.invalid_auth_token
+        req["user"] = user
+        req["user_direct_auth"] = False
+
+    async def _mx_auth_callback(self, req: web.Request, auth: str) -> None:
+        user_id = await self.server.cs_proxy.get_user_id(auth)
+        # We can ignore the server name since get_user_id will only use the local server
+        localpart, _ = ClientAPI.parse_user_id(user_id)
+        user = await User.get(localpart)
+        if not user:
+            raise Error.user_not_found
+        req["user"] = user
+        req["user_direct_auth"] = True
+
+    @web.middleware
+    async def check_auth(self, req: web.Request, handler: Handler) -> web.Response:
+        return await self._check_auth_generic(req, handler, self._normal_auth_callback)
 
     @web.middleware
     async def check_mx_auth(self, req: web.Request, handler: Handler) -> web.Response:
-        if req.method == "OPTIONS":
-            return web.Response(headers=self._mxauth_cors)
-        try:
-            auth = req.headers["Authorization"]
-            if not auth.startswith("Bearer "):
-                raise Error.invalid_auth_header
-            auth = auth[len("Bearer "):]
-        except KeyError:
-            raise Error.missing_auth_header
-        if auth != self.shared_secret:
-            user_id = await self.server.cs_proxy.get_user_id(auth)
-            # We can ignore the server name since get_user_id will only use the local server
-            localpart, _ = ClientAPI.parse_user_id(user_id)
-            user = await User.get(localpart)
-            if not user:
-                raise Error.user_not_found
-            req["user"] = user
-            req["user_direct_auth"] = True
-        resp = await handler(req)
-        resp.headers.update(self._mxauth_cors)
-        return resp
+        return await self._check_auth_generic(req, handler, self._mx_auth_callback)
 
     def _make_registration(self, az: AppService) -> JSON:
         prefix = f"{re.escape(self.global_prefix)}{re.escape(az.owner)}_{re.escape(az.prefix)}"
