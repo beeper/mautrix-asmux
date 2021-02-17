@@ -198,7 +198,7 @@ class AppServiceProxy(AppServiceServerMixin):
     async def handle_transaction(self, txn_id: str, events: List[JSON],
                                  ephemeral: Optional[List[JSON]] = None) -> None:
         self.log.debug(f"Received transaction {txn_id} with {len(events)} PDUs "
-                       f"and {len(ephemeral)} EDUs")
+                       f"and {len(ephemeral or [])} EDUs")
         data: Dict[UUID, Events] = defaultdict(lambda: Events(txn_id, [], []))
         for event in events:
             room_id = event["room_id"]
