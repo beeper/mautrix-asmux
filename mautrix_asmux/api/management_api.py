@@ -84,7 +84,7 @@ class ManagementAPI:
         self._cors = {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "Authorization, Content-Type",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
         }
 
     async def _check_auth_generic(self, req: web.Request, handler: Handler, callback: AuthCallback
