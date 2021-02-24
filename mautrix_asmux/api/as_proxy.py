@@ -134,6 +134,7 @@ class AppServiceProxy(AppServiceServerMixin):
         err_prefix = (f"Failed to send transaction {events.txn_id} "
                       f"({len(events.pdu)}p/{len(events.edu)}e) to {url}")
         retries = 10 if len(events.pdu) > 0 else 2
+        backoff = 1
         while attempt < retries:
             attempt += 1
             self.log.debug(f"Sending transaction {events.txn_id} to {appservice.name} "
@@ -151,7 +152,8 @@ class AppServiceProxy(AppServiceServerMixin):
                     self.log.warning(f"{err_prefix}: HTTP {resp.status}: {await resp.text()!r}")
                 else:
                     return True
-            await asyncio.sleep(1)
+            await asyncio.sleep(backoff)
+            backoff *= 1.5
         self.log.warning(f"Gave up trying to send {events.txn_id} to {appservice.name}")
         return False
 
