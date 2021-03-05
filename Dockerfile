@@ -1,9 +1,4 @@
-FROM docker.io/alpine:3.12
-
-RUN echo $'\
-@edge http://dl-cdn.alpinelinux.org/alpine/edge/main\n\
-@edge http://dl-cdn.alpinelinux.org/alpine/edge/testing\n\
-@edge http://dl-cdn.alpinelinux.org/alpine/edge/community' >> /etc/apk/repositories
+FROM docker.io/alpine:3.13
 
 RUN apk add --no-cache \
       python3 py3-pip py3-setuptools py3-wheel \
@@ -11,8 +6,7 @@ RUN apk add --no-cache \
       py3-ruamel.yaml \
       py3-attrs \
       py3-idna \
-      # We need 3.x
-      py3-cryptography@edge \
+      py3-cryptography \
       py3-bcrypt \
       # Other dependencies
       ca-certificates \

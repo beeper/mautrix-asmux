@@ -1,7 +1,7 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
-# Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
-from typing import Optional, List, Dict, NamedTuple, Deque
-from collections import defaultdict, deque
+# Copyright (C) 2021 Beeper, Inc. All rights reserved.
+from typing import Optional, List, Dict, NamedTuple
+from collections import defaultdict
 from uuid import UUID
 import logging
 import asyncio
@@ -14,13 +14,28 @@ import aiohttp
 
 from mautrix.types import JSON
 from mautrix.appservice import AppServiceServerMixin
+from mautrix.util.opt_prometheus import Counter
 
 from ..database import Room, AppService
 from ..posthog import track
 from .cs_proxy import ClientProxy
 from .errors import Error
 
-Events = NamedTuple('Events', txn_id=str, pdu=List[JSON], edu=List[JSON])
+Events = NamedTuple('Events', txn_id=str, pdu=List[JSON], edu=List[JSON], types=List[str])
+
+RECEIVED_EVENTS = Counter("asmux_received_events", "Number of incoming events",
+                          labelnames=["type"])
+DROPPED_EVENTS = Counter("asmux_dropped_events", "Number of events with no target appservice",
+                         labelnames=["type"])
+ACCEPTED_EVENTS = Counter("asmux_accepted_events",
+                          "Number of events that have a target appservice",
+                          labelnames=["owner", "bridge", "type"])
+SUCCESSFUL_EVENTS = Counter("asmux_successful_events",
+                            "Number of PDUs that were successfully sent to the target appservice",
+                            labelnames=["owner", "bridge", "type"])
+FAILED_EVENTS = Counter("asmux_failed_events",
+                        "Number of PDUs that were successfully sent to the target appservice",
+                        labelnames=["owner", "bridge", "type"])
 
 
 class AppServiceProxy(AppServiceServerMixin):
@@ -159,6 +174,9 @@ class AppServiceProxy(AppServiceServerMixin):
 
     async def post_events(self, appservice: AppService, events: Events) -> None:
         async with self.locks[appservice.id]:
+            for type in events.types:
+                ACCEPTED_EVENTS.labels(owner=appservice.owner, bridge=appservice.prefix,
+                                       type=type).inc()
             ok = False
             try:
                 if not appservice.push:
@@ -174,6 +192,9 @@ class AppServiceProxy(AppServiceServerMixin):
             if ok:
                 self.log.debug(f"Successfully sent {events.txn_id} to {appservice.name}")
                 self.loop.create_task(self.track_events(appservice, events))
+            metric = SUCCESSFUL_EVENTS if ok else FAILED_EVENTS
+            for type in events.types:
+                metric.labels(owner=appservice.owner, bridge=appservice.prefix, type=type).inc()
 
     async def register_room(self, event: JSON) -> Optional[Room]:
         try:
@@ -201,25 +222,32 @@ class AppServiceProxy(AppServiceServerMixin):
                                  ephemeral: Optional[List[JSON]] = None) -> None:
         self.log.debug(f"Received transaction {txn_id} with {len(events)} PDUs "
                        f"and {len(ephemeral or [])} EDUs")
-        data: Dict[UUID, Events] = defaultdict(lambda: Events(txn_id, [], []))
+        data: Dict[UUID, Events] = defaultdict(lambda: Events(txn_id, [], [], []))
         for event in events:
+            RECEIVED_EVENTS.labels(type=event.get("type", "")).inc()
             room_id = event["room_id"]
             room = await Room.get(room_id)
             if not room:
                 room = await self.register_room(event)
             if room:
                 data[room.owner].pdu.append(event)
+                data[room.owner].types.append(event.get("type", ""))
             else:
                 self.log.warning(f"No target found for event in {room_id}")
+                DROPPED_EVENTS.labels(type=event.get("type", "")).inc()
         for event in ephemeral or []:
+            RECEIVED_EVENTS.labels(type=event.get("type", "")).inc()
             room_id = event.get("room_id")
             if room_id:
                 room = await Room.get(room_id)
                 if room:
                     data[room.owner].edu.append(event)
-            elif event.get("type") == "m.presence":
-                # TODO find all appservices that care about the sender's presence.
-                pass
+                    data[room.owner].types.append(event.get("type", ""))
+            # elif event.get("type") == "m.presence":
+            #     TODO find all appservices that care about the sender's presence.
+            #     pass
+            else:
+                DROPPED_EVENTS.labels(type=event.get("type", "")).inc()
         for appservice_id, events in data.items():
             appservice = await AppService.get(appservice_id)
             self.log.debug(f"Preparing to send {len(events.pdu)} PDUs and {len(events.edu)} EDUs "

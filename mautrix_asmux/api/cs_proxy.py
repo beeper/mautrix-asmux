@@ -1,5 +1,5 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
-# Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
+# Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import Optional, Any, Tuple, Callable, Awaitable, Dict, List, Mapping
 from contextlib import asynccontextmanager
 from collections import defaultdict
@@ -18,11 +18,19 @@ from multidict import CIMultiDict, MultiDict
 
 from mautrix.client import ClientAPI
 from mautrix.types import UserID, RoomID, EventType
+from mautrix.util.opt_prometheus import Counter
 
 from ..database import AppService, User
 from .errors import Error
 
 Handler = Callable[[web.Request], Awaitable[web.Response]]
+
+REQUESTS_RECEIVED = Counter("asmux_requests_received",
+                            "Number of client-server API requests received from bridges",
+                            labelnames=["owner", "bridge", "method", "endpoint"])
+REQUESTS_HANDLED = Counter("asmux_requests_handled",
+                           "Number of client-server API requests handled",
+                           labelnames=["owner", "bridge", "method", "endpoint"])
 
 
 class HTTPCustomError(web.HTTPError):
@@ -194,7 +202,7 @@ class ClientProxy:
         if not az:
             req["proxy_for"] = "<no auth>"
             return await self._proxy(req, url, body=_body_override)
-        req["proxy_for"] = f"{az.owner}/{az.prefix}"
+        req["proxy_for"] = az.name
 
         headers, query = self._copy_data(req, az)
 
@@ -218,10 +226,60 @@ class ClientProxy:
         #     asyncio.ensure_future(track("Incoming remote event", f"@{az.owner}{self.mxid_suffix}",
         #                                 bridge_type=az.prefix, bridge_id=str(az.id)))
 
-        return await self._proxy(req, url, headers, query, body)
+        return await self._proxy(req, url, headers, query, body, az=az)
+
+    @staticmethod
+    def _relevant_path_part(url: URL) -> Optional[str]:
+        path = url.path
+        parts = path.split("/")
+        if path.startswith("/_matrix/media/r0/"):
+            return f"/media/{parts[4]}"
+        elif path.startswith("/_matrix/client/r0/rooms/") and len(parts) > 6:
+            if len(parts) > 7:
+                return f"/rooms/.../{parts[6]}/..."
+            else:
+                return f"/rooms/.../{parts[6]}"
+        elif path.startswith("/_matrix/client/r0/user/") and len(parts) > 6:
+            if len(parts) > 8 and parts[6] == "rooms" and parts[8] == "account_data":
+                return f"/user/.../rooms/.../account_data/..."
+            elif parts[6] == "account_data":
+                return f"/user/.../account_data/..."
+            else:
+                return f"/user/.../{'/'.join(parts[6:])}"
+        elif path.startswith("/_matrix/client/r0/directory/room/"):
+            return "/directory/room/..."
+        elif path.startswith("/_matrix/client/r0/directory/list/room/"):
+            return "/directory/list/room/..."
+        elif path.startswith("/_matrix/client/r0/join/"):
+            return "/join/..."
+        elif path.startswith("/_matrix/client/r0/sendToDevice/"):
+            return "/sendToDevice/..."
+        elif path.startswith("/_matrix/client/r0/devices/") and len(parts) > 5 and parts[5]:
+            return "/devices/..."
+        elif path.startswith("/_matrix/client/r0/pushrules/") and len(parts) > 5 and parts[5]:
+            return "/pushrules/..."
+        elif path.startswith("/_matrix/client/r0/presence/") and path.endswith("/status"):
+            return f"/presence/.../status"
+        elif path.startswith("/_matrix/client/r0/profile/"):
+            if len(parts) > 6:
+                return f"/profile/.../{parts[6]}"
+            return "/profile/..."
+        elif path.startswith("/_matrix/client/r0/"):
+            return path[len("/_matrix/client/r0"):]
+        elif path.startswith("/_matrix/client/unstable/"):
+            return path[len("/_matrix/client"):]
+        else:
+            return path
 
     async def _proxy(self, req: web.Request, url: URL, headers: Optional[CIMultiDict[str]] = None,
-                     query: Optional[MultiDict[str]] = None, body: Any = None) -> web.Response:
+                     query: Optional[MultiDict[str]] = None, body: Any = None,
+                     az: Optional[AppService] = None) -> web.Response:
+        metric_labels = {"method": req.method, "endpoint": self._relevant_path_part(url),
+                         "owner": "", "bridge": ""}
+        if az:
+            metric_labels["owner"] = az.owner
+            metric_labels["bridge"] = az.prefix
+        REQUESTS_RECEIVED.labels(**metric_labels).inc()
         try:
             req["proxy_url"] = url.with_query(query or req.query)
             resp = await self.http.request(req.method, url,
@@ -231,6 +289,8 @@ class ClientProxy:
         except aiohttp.ClientError as e:
             self.log.debug(f"{type(e)} proxying request {self.request_log_fmt(req)}: {e}")
             raise Error.failed_to_contact_homeserver
+        finally:
+            REQUESTS_HANDLED.labels(**metric_labels).inc()
         if resp.status >= 400 and resp.status not in (401, 403):
             self.log.debug(f"Got HTTP {resp.status} proxying request {self.request_log_fmt(req)}")
         return web.Response(status=resp.status, headers=resp.headers, body=resp.content)
