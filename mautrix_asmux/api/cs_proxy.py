@@ -72,13 +72,13 @@ class ClientProxy:
 
         self.app = web.Application(middlewares=[self.cancel_logger])
         self.app.router.add_post("/client/r0/login", self.proxy_login)
+        self.app.router.add_get("/client/unstable/fi.mau.as_sync", server.as_websocket.sync)
         self.app.router.add_put("/client/unstable/com.beeper.asmux/dms", self.update_dms)
         self.app.router.add_patch("/client/unstable/com.beeper.asmux/dms", self.update_dms)
-        self.app.router.add_get("/client/unstable/fi.mau.as_sync", server.as_websocket.sync)
-        self.app.router.add_route(hdrs.METH_ANY, "/{spec:(client|media)}/{path:.+}", self.proxy)
         # Deprecated, use com.beeper.asmux
         self.app.router.add_put("/client/unstable/net.maunium.asmux/dms", self.update_dms)
         self.app.router.add_patch("/client/unstable/net.maunium.asmux/dms", self.update_dms)
+        self.app.router.add_route(hdrs.METH_ANY, "/{spec:(client|media)}/{path:.+}", self.proxy)
 
     @staticmethod
     def request_log_fmt(req: web.Request) -> str:
