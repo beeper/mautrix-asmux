@@ -1,8 +1,7 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
-# Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
+# Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import Callable, Awaitable, Optional, TYPE_CHECKING
 from uuid import UUID
-import os.path
 import logging
 import json
 import re
@@ -71,12 +70,6 @@ class ManagementAPI:
         self.app.router.add_get("/appservice/{owner}/{prefix}", self.get_appservice)
         self.app.router.add_delete("/appservice/{id}", self.delete_appservice)
         self.app.router.add_delete("/appservice/{owner}/{prefix}", self.delete_appservice)
-
-        self.public_app = web.Application()
-        self.public_app.router.add_get("/user/{id}", self.get_user_public)
-        self.public_app.router.add_get("/user/{id}/redirect", self.redirect_user_public)
-        self.public_app.router.add_get("/user/{id}/redirect/{target:.*}",
-                                       self.redirect_user_public)
 
         self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
         self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
@@ -178,31 +171,6 @@ class ManagementAPI:
             raise Error.appservice_access_denied
         return az
 
-    async def get_user_public(self, req: web.Request) -> web.Response:
-        find_user_id = req.match_info["id"]
-        user = await User.get(find_user_id)
-        if not user:
-            raise Error.user_not_found
-        return web.json_response({
-            "id": user.id,
-            "manager_url": user.manager_url,
-        }, headers={
-            "Access-Control-Allow-Origin": "*",
-        })
-
-    async def redirect_user_public(self, req: web.Request) -> None:
-        find_user_id = req.match_info["id"]
-        user = await User.get(find_user_id)
-        if not user:
-            raise Error.user_not_found
-        url = URL(user.manager_url)
-        try:
-            url = url.with_path(os.path.join(url.path, req.match_info["target"]))
-        except KeyError:
-            pass
-        url = url.with_query(req.query)
-        raise web.HTTPFound(url)
-
     @staticmethod
     async def _get_user(req: web.Request, allow_create: bool) -> User:
         find_user_id = req.match_info["id"]
@@ -227,12 +195,12 @@ class ManagementAPI:
         return web.json_response(user.to_dict())
 
     async def put_user(self, req: web.Request) -> web.Response:
-        try:
-            data = await req.json()
-        except json.JSONDecodeError:
-            raise Error.request_not_json
+        # try:
+        #     data = await req.json()
+        # except json.JSONDecodeError:
+        #     raise Error.request_not_json
         user = await self._get_user(req, allow_create=True)
-        await user.edit(manager_url=data["manager_url"])
+        # await user.edit()
         return web.json_response(user.to_dict())
 
     async def get_user_proxy(self, req: web.Request) -> web.Response:

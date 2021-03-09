@@ -1,5 +1,5 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
-# Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
+# Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import Optional, Dict, ClassVar, TypedDict
 import logging
 import random
@@ -49,7 +49,6 @@ class User(Base):
     id: str
     api_token: str
     login_token: str
-    manager_url: Optional[str]
     proxy_config: Optional[ProxyConfig]
 
     cache_by_id: ClassVar[Dict[str, 'User']] = {}
@@ -115,7 +114,7 @@ class User(Base):
         except KeyError:
             pass
         conn = conn or cls.db
-        row = await conn.fetchrow('SELECT id, api_token, login_token, manager_url, proxy_config '
+        row = await conn.fetchrow('SELECT id, api_token, login_token, proxy_config '
                                   'FROM "user" WHERE id=$1', id)
         return User(**row)._add_to_cache() if row else None
 
@@ -127,7 +126,7 @@ class User(Base):
         except KeyError:
             pass
         conn = conn or cls.db
-        row = await conn.fetchrow('SELECT id, api_token, login_token, manager_url, proxy_config '
+        row = await conn.fetchrow('SELECT id, api_token, login_token, proxy_config '
                                   'FROM "user" WHERE api_token=$1', api_token)
         return User(**row)._add_to_cache() if row else None
 
@@ -145,31 +144,28 @@ class User(Base):
             user = await cls.get(id, conn=conn)
             if not user:
                 user = User(id=id, api_token=cls._random(64), login_token=cls._random(64),
-                            manager_url=None, proxy_config=None)
+                            proxy_config=None)
                 await user.insert(conn=conn)
             return user
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
-        q = ('INSERT INTO "user" (id, api_token, login_token, manager_url, proxy_config) '
-             'VALUES ($1, $2, $3, $4, $5)')
-        await conn.execute(q, self.id, self.api_token, self.login_token, self.manager_url,
+        q = ('INSERT INTO "user" (id, api_token, login_token, proxy_config) '
+             'VALUES ($1, $2, $3, $4)')
+        await conn.execute(q, self.id, self.api_token, self.login_token,
                            json.dumps(self.proxy_config) if self.proxy_config else None)
         self._add_to_cache()
         self.log.info(f"Created user {self.id}")
 
-    async def edit(self, manager_url: str = unset, proxy_config: Optional[ProxyConfig] = unset, *,
+    async def edit(self, proxy_config: Optional[ProxyConfig] = unset, *,
                    conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
-        if manager_url is unset:
-            manager_url = self.manager_url
         if proxy_config is unset:
             proxy_config = self.proxy_config
         proxy_config_str = json.dumps(proxy_config) if proxy_config else None
-        q = 'UPDATE "user" SET manager_url=$1, proxy_config=$2 WHERE id=$3'
-        await conn.execute(q, manager_url, proxy_config_str, self.id)
+        q = 'UPDATE "user" SET proxy_config=$1 WHERE id=$2'
+        await conn.execute(q, proxy_config_str, self.id)
         self.proxy_config = proxy_config
-        self.manager_url = manager_url
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
