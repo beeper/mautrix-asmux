@@ -2,8 +2,7 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import Optional, Dict, ClassVar, TypedDict
 import logging
-import random
-import string
+import secrets
 import json
 
 from cryptography.hazmat.primitives.serialization import (Encoding, PrivateFormat, PublicFormat,
@@ -91,12 +90,12 @@ class User(Base):
     def generate_socks_config(self) -> ProxySOCKSConfig:
         return {
             "username": f"nova-{self.id}-proxy",
-            "password": self._random(50),
+            "password": secrets.token_urlsafe(48),
         }
 
     def generate_ssh_key(self) -> SSHKey:
         key = Ed25519PrivateKey.generate()
-        passphrase = self._random(50)
+        passphrase = secrets.token_urlsafe(48)
         privkey = key.private_bytes(Encoding.PEM, PrivateFormat.OpenSSH,
                                     BestAvailableEncryption(passphrase.encode("utf-8")))
         pubkey = key.public_key().public_bytes(Encoding.OpenSSH, PublicFormat.OpenSSH)
@@ -130,10 +129,6 @@ class User(Base):
                                   'FROM "user" WHERE api_token=$1', api_token)
         return User(**row)._add_to_cache() if row else None
 
-    @staticmethod
-    def _random(length: int) -> str:
-        return "".join(random.choices(string.ascii_letters + string.digits, k=length))
-
     @classmethod
     async def get_or_create(cls, id: str) -> 'User':
         try:
@@ -143,8 +138,8 @@ class User(Base):
         async with cls.db.acquire() as conn, conn.transaction():
             user = await cls.get(id, conn=conn)
             if not user:
-                user = User(id=id, api_token=cls._random(64), login_token=cls._random(64),
-                            proxy_config=None)
+                user = User(id=id, api_token=secrets.token_urlsafe(48),
+                            login_token=secrets.token_urlsafe(48), proxy_config=None)
                 await user.insert(conn=conn)
             return user
 

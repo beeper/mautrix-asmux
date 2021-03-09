@@ -2,8 +2,7 @@
 # Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
 from typing import Optional, List, Iterable, Dict, Tuple, ClassVar
 from uuid import UUID, uuid4
-import random
-import string
+import secrets
 
 from attr import dataclass
 import asyncpg
@@ -72,10 +71,6 @@ class AppService(Base):
                                   owner, prefix)
         return AppService(**row)._add_to_cache() if row else None
 
-    @staticmethod
-    def _random(length: int) -> str:
-        return "".join(random.choices(string.ascii_letters + string.digits, k=length))
-
     @classmethod
     async def find_or_create(cls, user: User, prefix: str, *, bot: str = "bot", address: str = "",
                              push: bool = True) -> 'AppService':
@@ -87,9 +82,9 @@ class AppService(Base):
             az = await cls.find(user.id, prefix, conn=conn)
             if not az:
                 uuid = uuid4()
-                hs_token = cls._random(64)
+                hs_token = secrets.token_urlsafe(48)
                 # The input AS token also contains the UUID, so we want this to be a bit shorter
-                as_token = cls._random(27)
+                as_token = secrets.token_urlsafe(20)
                 az = AppService(id=uuid, owner=user.id, prefix=prefix, bot=bot, address=address,
                                 hs_token=hs_token, as_token=as_token, push=push,
                                 login_token=user.login_token)
