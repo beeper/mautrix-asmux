@@ -1,15 +1,13 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, List, Dict, NamedTuple
+from typing import Optional, List, Dict, NamedTuple, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
 import asyncio
-import time
 
 from yarl import URL
-from aiohttp import web, ClientError
-from aiohttp.http import WSMessage, WSMsgType, WSCloseCode
+from aiohttp import ClientError
 import aiohttp
 
 from mautrix.types import JSON
@@ -17,9 +15,10 @@ from mautrix.appservice import AppServiceServerMixin
 from mautrix.util.opt_prometheus import Counter
 
 from ..database import Room, AppService
-from ..posthog import track
-from .cs_proxy import ClientProxy
-from .errors import Error
+from ..posthog import track_events
+
+if TYPE_CHECKING:
+    from ..server import MuxServer
 
 Events = NamedTuple('Events', txn_id=str, pdu=List[JSON], edu=List[JSON], types=List[str])
 
@@ -46,102 +45,18 @@ class AppServiceProxy(AppServiceServerMixin):
     hs_token: str
     mxid_prefix: str
     mxid_suffix: str
-    websockets: Dict[UUID, web.WebSocketResponse]
     locks: Dict[UUID, asyncio.Lock]
 
-    def __init__(self, mxid_prefix: str, mxid_suffix: str, hs_token: str,
+    def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_token: str,
                  http: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__(ephemeral_events=True)
+        self.server = server
         self.loop = loop
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
         self.hs_token = hs_token
         self.http = http
-        self.websockets = {}
         self.locks = defaultdict(lambda: asyncio.Lock())
-
-    async def stop(self) -> None:
-        self.log.debug("Disconnecting websockets")
-        await asyncio.gather(*[ws.close(code=WSCloseCode.SERVICE_RESTART,
-                                        message=b'{"status": "server_shutting_down"}')
-                               for ws in self.websockets.values()])
-
-    async def sync(self, req: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse()
-        az = await ClientProxy.find_appservice(req, raise_errors=True)
-        if az.push:
-            raise Error.appservice_ws_not_enabled
-        await ws.prepare(req)
-        if az.id in self.websockets:
-            self.log.debug(f"New websocket connection coming in for {az.name}, closing old one")
-            await self.websockets[az.id].close(code=WSCloseCode.OK,
-                                               message=b'{"status": "conn_replaced"}')
-            pass
-        self.websockets[az.id] = ws
-        self.log.debug(f"Websocket transaction connection opened to {az.name}")
-        try:
-            await ws.send_json({"status": "connected"})
-            msg: WSMessage
-            async for msg in ws:
-                if msg.type == WSMsgType.ERROR:
-                    self.log.error(f"Error in websocket connection to {az.name}",
-                                   exc_info=ws.exception())
-                    break
-                elif msg.type == WSMsgType.CLOSE:
-                    break
-        finally:
-            if self.websockets.get(az.id) == ws:
-                del self.websockets[az.id]
-        self.log.debug(f"Websocket transaction connection closed to {az.name}")
-        return ws
-
-    def _get_tracking_event_type(self, appservice: AppService, event: JSON) -> Optional[str]:
-        limit = int(time.time() * 1000) - 5 * 60 * 1000
-        if event.get("origin_server_ts", limit) < limit:
-            return None  # message is too old
-        elif event.get("type", None) not in ("m.room.message", "m.room.encrypted"):
-            return None  # not a message
-        elif event.get("sender", None) != f"@{appservice.owner}{self.mxid_suffix}":
-            return None  # message isn't from the user
-        content = event.get("content")
-        if not isinstance(content, dict):
-            content = {}
-        relates_to = event.get("m.relates_to")
-        if not isinstance(relates_to, dict):
-            relates_to = {}
-        if relates_to.get("rel_type", None) == "m.replace":
-            return None  # message is an edit
-        for bridge in ("telegram", "whatsapp", "facebook", "hangouts", "amp", "twitter", "signal",
-                       "instagram"):
-            if content.get(f"net.maunium.{bridge}.puppet", False):
-                return "Outgoing remote event"
-        if content.get("source", None) in ("slack", "discord"):
-            return "Outgoing remote event"
-        return "Outgoing Matrix event"
-
-    async def track_events(self, appservice: AppService, events: Events) -> None:
-        for event in events.pdu:
-            event_type = self._get_tracking_event_type(appservice, event)
-            if event_type:
-                await track(event_type, event["sender"],
-                            bridge_type=appservice.prefix, bridge_id=str(appservice.id))
-
-    async def _post_events_ws(self, appservice: AppService, events: Events) -> bool:
-        try:
-            ws = self.websockets[appservice.id]
-        except KeyError:
-            # TODO buffer transactions
-            self.log.warning(f"Not sending transaction {events.txn_id} to {appservice.name}: "
-                             f"websocket not connected")
-            return False
-        self.log.debug(f"Sending transaction {events.txn_id} to {appservice.name} via websocket")
-        await ws.send_json({
-            "status": "ok",
-            "txn_id": events.txn_id,
-            "events": events.pdu,
-            "ephemeral": events.edu,
-        })
-        return True
 
     async def _post_events_http(self, appservice: AppService, events: Events) -> bool:
         attempt = 0
@@ -180,7 +95,7 @@ class AppServiceProxy(AppServiceServerMixin):
             ok = False
             try:
                 if not appservice.push:
-                    ok = await self._post_events_ws(appservice, events)
+                    ok = await self.server.as_websocket.post_events(appservice, events)
                 elif appservice.address:
                     ok = await self._post_events_http(appservice, events)
                 else:
@@ -191,7 +106,7 @@ class AppServiceProxy(AppServiceServerMixin):
                                    f"to {appservice.name}")
             if ok:
                 self.log.debug(f"Successfully sent {events.txn_id} to {appservice.name}")
-                self.loop.create_task(self.track_events(appservice, events))
+                self.loop.create_task(track_events(appservice, events))
             metric = SUCCESSFUL_EVENTS if ok else FAILED_EVENTS
             for type in events.types:
                 metric.labels(owner=appservice.owner, bridge=appservice.prefix, type=type).inc()

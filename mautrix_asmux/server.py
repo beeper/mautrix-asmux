@@ -9,7 +9,7 @@ from aiohttp import web
 from yarl import URL
 
 from .config import Config
-from .api import ClientProxy, AppServiceProxy, ManagementAPI
+from .api import ClientProxy, AppServiceProxy, AppServiceWebsocketHandler, ManagementAPI
 
 
 class MuxServer:
@@ -18,6 +18,11 @@ class MuxServer:
     runner: web.AppRunner
     loop: asyncio.AbstractEventLoop
     http: aiohttp.ClientSession
+
+    as_proxy: AppServiceProxy
+    as_websocket: AppServiceWebsocketHandler
+    cs_proxy: ClientProxy
+    management_api: ManagementAPI
 
     host: str
     port: int
@@ -35,12 +40,12 @@ class MuxServer:
 
         self.as_proxy = AppServiceProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                         hs_token=config["appservice.hs_token"], http=self.http,
-                                        loop=self.loop)
-        self.cs_proxy = ClientProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
+                                        loop=self.loop, server=self)
+        self.as_websocket = AppServiceWebsocketHandler(server=self)
+        self.cs_proxy = ClientProxy(server=self, mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                     hs_address=URL(config["homeserver.address"]),
                                     as_token=config["appservice.as_token"], http=self.http,
-                                    login_shared_secret=config["homeserver.login_shared_secret"],
-                                    as_sync=self.as_proxy.sync)
+                                    login_shared_secret=config["homeserver.login_shared_secret"])
         self.management_api = ManagementAPI(config=config, http=self.http, server=self)
 
         self.app = web.Application()
@@ -57,7 +62,8 @@ class MuxServer:
         await site.start()
 
     async def stop(self) -> None:
-        await self.as_proxy.stop()
+        await self.as_websocket.stop()
+        self.loop.create_task(self.http.close())
         self.log.debug("Stopping web server")
         await self.runner.shutdown()
         await self.runner.cleanup()

@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Any, Tuple, Callable, Awaitable, Dict, List, Mapping
+from typing import Optional, Any, Tuple, Callable, Awaitable, Dict, List, Mapping, TYPE_CHECKING
 from contextlib import asynccontextmanager
 from collections import defaultdict
 from uuid import UUID
@@ -22,6 +22,9 @@ from mautrix.util.opt_prometheus import Counter
 
 from ..database import AppService, User
 from .errors import Error
+
+if TYPE_CHECKING:
+    from ..server import MuxServer
 
 Handler = Callable[[web.Request], Awaitable[web.Response]]
 
@@ -54,8 +57,8 @@ class ClientProxy:
     dm_locks: Dict[UserID, asyncio.Lock]
     user_ids: Dict[str, UserID]
 
-    def __init__(self, mxid_prefix: str, mxid_suffix: str, hs_address: URL, as_token: str,
-                 login_shared_secret: Optional[str], http: aiohttp.ClientSession, as_sync: Handler
+    def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_address: URL,
+                 as_token: str, login_shared_secret: Optional[str], http: aiohttp.ClientSession,
                  ) -> None:
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
@@ -69,10 +72,13 @@ class ClientProxy:
 
         self.app = web.Application(middlewares=[self.cancel_logger])
         self.app.router.add_post("/client/r0/login", self.proxy_login)
+        self.app.router.add_put("/client/unstable/com.beeper.asmux/dms", self.update_dms)
+        self.app.router.add_patch("/client/unstable/com.beeper.asmux/dms", self.update_dms)
+        self.app.router.add_get("/client/unstable/fi.mau.as_sync", server.as_websocket.sync)
+        self.app.router.add_route(hdrs.METH_ANY, "/{spec:(client|media)}/{path:.+}", self.proxy)
+        # Deprecated, use com.beeper.asmux
         self.app.router.add_put("/client/unstable/net.maunium.asmux/dms", self.update_dms)
         self.app.router.add_patch("/client/unstable/net.maunium.asmux/dms", self.update_dms)
-        self.app.router.add_get("/client/unstable/fi.mau.as_sync", as_sync)
-        self.app.router.add_route(hdrs.METH_ANY, "/{spec:(client|media)}/{path:.+}", self.proxy)
 
     @staticmethod
     def request_log_fmt(req: web.Request) -> str:
@@ -287,7 +293,7 @@ class ClientProxy:
                                            params=query or req.query.copy(),
                                            data=body or req.content)
         except aiohttp.ClientError as e:
-            self.log.debug(f"{type(e)} proxying request {self.request_log_fmt(req)}: {e}")
+            self.log.debug(f"{type(e).__name__} proxying request {self.request_log_fmt(req)}: {e}")
             raise Error.failed_to_contact_homeserver
         finally:
             REQUESTS_HANDLED.labels(**metric_labels).inc()
