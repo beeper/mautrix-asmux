@@ -1,5 +1,5 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
-# Copyright (C) 2020 Nova Technology Corporation, Ltd. All rights reserved.
+# Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import Dict, Optional, ClassVar
 from uuid import UUID
 

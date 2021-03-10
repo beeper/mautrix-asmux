@@ -12,7 +12,7 @@ except IOError:
 setuptools.setup(
     name="mautrix-asmux",
     version=__version__,
-    url="https://github.com/tulir/mautrix-asmux",
+    url="https://gitlab.com/nova/mautrix-asmux",
 
     author="Tulir Asokan",
     author_email="tulir@maunium.net",
