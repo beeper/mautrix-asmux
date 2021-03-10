@@ -1,13 +1,11 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, List, Dict, NamedTuple, TYPE_CHECKING
+from typing import Optional, List, Dict, NamedTuple, TypedDict, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
 import asyncio
 
-from yarl import URL
-from aiohttp import ClientError
 import aiohttp
 
 from mautrix.types import JSON
@@ -37,6 +35,13 @@ FAILED_EVENTS = Counter("asmux_failed_events",
                         labelnames=["owner", "bridge", "type"])
 
 
+class Pong(TypedDict):
+    ok: bool
+    error_source: str
+    error: str
+    message: str
+
+
 class AppServiceProxy(AppServiceServerMixin):
     log: logging.Logger = logging.getLogger("mau.api.as_proxy")
     loop: asyncio.AbstractEventLoop
@@ -58,34 +63,29 @@ class AppServiceProxy(AppServiceServerMixin):
         self.http = http
         self.locks = defaultdict(lambda: asyncio.Lock())
 
-    async def _post_events_http(self, appservice: AppService, events: Events) -> bool:
-        attempt = 0
-        url = URL(appservice.address) / "_matrix/app/v1/transactions" / events.txn_id
-        err_prefix = (f"Failed to send transaction {events.txn_id} "
-                      f"({len(events.pdu)}p/{len(events.edu)}e) to {url}")
-        retries = 10 if len(events.pdu) > 0 else 2
-        backoff = 1
-        while attempt < retries:
-            attempt += 1
-            self.log.debug(f"Sending transaction {events.txn_id} to {appservice.name} "
-                           f"via HTTP, attempt #{attempt}")
-            try:
-                resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
-                                           json={"events": events.pdu, "ephemeral": events.edu})
-            except ClientError as e:
-                self.log.warning(f"{err_prefix}: {e}")
-            except Exception:
-                self.log.exception(f"{err_prefix}")
-                break
+    async def ping(self, appservice: AppService) -> Pong:
+        try:
+            if not appservice.push:
+                pong = await self.server.as_websocket.ping(appservice)
+            elif appservice.address:
+                pong = await self.server.as_http.ping(appservice)
             else:
-                if resp.status >= 400:
-                    self.log.warning(f"{err_prefix}: HTTP {resp.status}: {await resp.text()!r}")
-                else:
-                    return True
-            await asyncio.sleep(backoff)
-            backoff *= 1.5
-        self.log.warning(f"Gave up trying to send {events.txn_id} to {appservice.name}")
-        return False
+                self.log.warning(f"Not pinging {appservice.name}: no address configured")
+                return {"ok": False, "error_source": "asmux", "error": "ping-no-remote",
+                        "message": f"Couldn't make ping: no address configured"}
+            if "ok" not in pong:
+                pong["ok"] = False
+            if not pong["ok"]:
+                if "error_source" not in pong:
+                    pong["error_source"] = "unknown"
+                if "error" not in pong:
+                    pong["error"] = "unknown-error"
+                if "message" not in pong:
+                    pong["message"] = "Ping returned unknown error"
+        except Exception as e:
+            self.log.exception(f"Fatal error pinging {appservice.name}")
+            return {"ok": False, "error_source": "asmux", "error": "ping-fatal-error",
+                    "message": f"Fatal error while pinging: {e}"}
 
     async def post_events(self, appservice: AppService, events: Events) -> None:
         async with self.locks[appservice.id]:
@@ -97,7 +97,7 @@ class AppServiceProxy(AppServiceServerMixin):
                 if not appservice.push:
                     ok = await self.server.as_websocket.post_events(appservice, events)
                 elif appservice.address:
-                    ok = await self._post_events_http(appservice, events)
+                    ok = await self.server.as_http.post_events(appservice, events)
                 else:
                     self.log.warning(f"Not sending transaction {events.txn_id} "
                                      f"to {appservice.name}: no address configured")

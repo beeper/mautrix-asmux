@@ -72,7 +72,7 @@ class ClientProxy:
 
         self.app = web.Application(middlewares=[self.cancel_logger])
         self.app.router.add_post("/client/r0/login", self.proxy_login)
-        self.app.router.add_get("/client/unstable/fi.mau.as_sync", server.as_websocket.sync)
+        self.app.router.add_get("/client/unstable/fi.mau.as_sync", server.as_websocket.handle_ws)
         self.app.router.add_put("/client/unstable/com.beeper.asmux/dms", self.update_dms)
         self.app.router.add_patch("/client/unstable/com.beeper.asmux/dms", self.update_dms)
         # Deprecated, use com.beeper.asmux

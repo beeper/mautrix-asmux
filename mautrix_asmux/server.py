@@ -9,7 +9,8 @@ from aiohttp import web
 from yarl import URL
 
 from .config import Config
-from .api import ClientProxy, AppServiceProxy, AppServiceWebsocketHandler, ManagementAPI
+from .api import (ClientProxy, AppServiceProxy, AppServiceWebsocketHandler, AppServiceHTTPHandler,
+                  ManagementAPI)
 
 
 class MuxServer:
@@ -21,6 +22,7 @@ class MuxServer:
 
     as_proxy: AppServiceProxy
     as_websocket: AppServiceWebsocketHandler
+    as_http: AppServiceHTTPHandler
     cs_proxy: ClientProxy
     management_api: ManagementAPI
 
@@ -41,7 +43,8 @@ class MuxServer:
         self.as_proxy = AppServiceProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                         hs_token=config["appservice.hs_token"], http=self.http,
                                         loop=self.loop, server=self)
-        self.as_websocket = AppServiceWebsocketHandler(server=self)
+        self.as_http = AppServiceHTTPHandler(http=self.http)
+        self.as_websocket = AppServiceWebsocketHandler()
         self.cs_proxy = ClientProxy(server=self, mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                     hs_address=URL(config["homeserver.address"]),
                                     as_token=config["appservice.as_token"], http=self.http,
