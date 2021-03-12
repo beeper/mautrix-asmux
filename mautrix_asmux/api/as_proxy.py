@@ -35,8 +35,10 @@ FAILED_EVENTS = Counter("asmux_failed_events",
                         labelnames=["owner", "bridge", "type"])
 
 
-class Pong(TypedDict):
+class Pong(TypedDict, total=False):
     ok: bool
+    timestamp: int
+    ttl: int
     error_source: str
     error: str
     message: str
@@ -44,7 +46,6 @@ class Pong(TypedDict):
 
 class AppServiceProxy(AppServiceServerMixin):
     log: logging.Logger = logging.getLogger("mau.api.as_proxy")
-    loop: asyncio.AbstractEventLoop
     http: aiohttp.ClientSession
 
     hs_token: str
@@ -53,39 +54,14 @@ class AppServiceProxy(AppServiceServerMixin):
     locks: Dict[UUID, asyncio.Lock]
 
     def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_token: str,
-                 http: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop) -> None:
+                 http: aiohttp.ClientSession) -> None:
         super().__init__(ephemeral_events=True)
         self.server = server
-        self.loop = loop
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
         self.hs_token = hs_token
         self.http = http
         self.locks = defaultdict(lambda: asyncio.Lock())
-
-    async def ping(self, appservice: AppService) -> Pong:
-        try:
-            if not appservice.push:
-                pong = await self.server.as_websocket.ping(appservice)
-            elif appservice.address:
-                pong = await self.server.as_http.ping(appservice)
-            else:
-                self.log.warning(f"Not pinging {appservice.name}: no address configured")
-                return {"ok": False, "error_source": "asmux", "error": "ping-no-remote",
-                        "message": f"Couldn't make ping: no address configured"}
-            if "ok" not in pong:
-                pong["ok"] = False
-            if not pong["ok"]:
-                if "error_source" not in pong:
-                    pong["error_source"] = "unknown"
-                if "error" not in pong:
-                    pong["error"] = "unknown-error"
-                if "message" not in pong:
-                    pong["message"] = "Ping returned unknown error"
-        except Exception as e:
-            self.log.exception(f"Fatal error pinging {appservice.name}")
-            return {"ok": False, "error_source": "asmux", "error": "ping-fatal-error",
-                    "message": f"Fatal error while pinging: {e}"}
 
     async def post_events(self, appservice: AppService, events: Events) -> None:
         async with self.locks[appservice.id]:
@@ -106,7 +82,7 @@ class AppServiceProxy(AppServiceServerMixin):
                                    f"to {appservice.name}")
             if ok:
                 self.log.debug(f"Successfully sent {events.txn_id} to {appservice.name}")
-                self.loop.create_task(track_events(appservice, events))
+                asyncio.create_task(track_events(appservice, events))
             metric = SUCCESSFUL_EVENTS if ok else FAILED_EVENTS
             for type in events.types:
                 metric.labels(owner=appservice.owner, bridge=appservice.prefix, type=type).inc()
@@ -167,4 +143,4 @@ class AppServiceProxy(AppServiceServerMixin):
             appservice = await AppService.get(appservice_id)
             self.log.debug(f"Preparing to send {len(events.pdu)} PDUs and {len(events.edu)} EDUs "
                            f"from transaction {events.txn_id} to {appservice.name}")
-            self.loop.create_task(self.post_events(appservice, events))
+            asyncio.create_task(self.post_events(appservice, events))

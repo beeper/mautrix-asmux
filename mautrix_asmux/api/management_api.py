@@ -62,6 +62,7 @@ class ManagementAPI:
         self.app = web.Application(middlewares=[self.check_auth])
         self.app.router.add_get("/user/{id}", self.get_user)
         self.app.router.add_put("/user/{id}", self.put_user)
+        self.app.router.add_get("/user/{id}/bridge_state", server.bridge_monitor.handle_ws)
         self.app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
         self.app.router.add_put("/user/{id}/proxy", self.put_user_proxy)
         self.app.router.add_put("/appservice/{id}", self.provision_appservice)

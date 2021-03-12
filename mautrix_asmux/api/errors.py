@@ -52,6 +52,11 @@ class _ErrorMeta:
                                          "receiving transactions."))
 
     @property
+    def server_shutting_down(self) -> web.HTTPException:
+        return web.HTTPServiceUnavailable(**self._make_error(
+            "FI.MAU.SHUTTING_DOWN", "The server is shutting down. Please try again later."))
+
+    @property
     def user_access_denied(self) -> web.HTTPException:
         return web.HTTPUnauthorized(**self._make_error(
             "M_UNAUTHORIZED", "You are not authorized to access that user"))

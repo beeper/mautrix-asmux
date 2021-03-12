@@ -53,10 +53,10 @@ class AppServiceMux(Program):
         self.database = Database(url=self.config["mux.database"], upgrade_table=upgrade_table)
         Base.db = self.database
         self.client = self.loop.run_until_complete(self._create_client())
-        self.server = MuxServer(self.config, http=self.client, loop=self.loop)
+        self.server = MuxServer(self.config, http=self.client)
         if self.config["posthog.token"]:
             init_posthog(self.config["posthog.token"], self.config["posthog.host"],
-                          self.client)
+                         ":" + self.config["homeserver.domain"], self.client)
 
     async def _create_client(self) -> ClientSession:
         conn = TCPConnector(limit=0)

@@ -10,14 +10,13 @@ from yarl import URL
 
 from .config import Config
 from .api import (ClientProxy, AppServiceProxy, AppServiceWebsocketHandler, AppServiceHTTPHandler,
-                  ManagementAPI)
+                  ManagementAPI, BridgeMonitor)
 
 
 class MuxServer:
     log: logging.Logger = logging.getLogger("mau.server")
     app: web.Application
     runner: web.AppRunner
-    loop: asyncio.AbstractEventLoop
     http: aiohttp.ClientSession
 
     as_proxy: AppServiceProxy
@@ -25,26 +24,26 @@ class MuxServer:
     as_http: AppServiceHTTPHandler
     cs_proxy: ClientProxy
     management_api: ManagementAPI
+    bridge_monitor: BridgeMonitor
 
     host: str
     port: int
 
-    def __init__(self, config: Config, http: Optional[aiohttp.ClientSession] = None,
-                 loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    def __init__(self, config: Config, http: aiohttp.ClientSession) -> None:
         super().__init__()
         self.host = config["mux.hostname"]
         self.port = config["mux.port"]
         mxid_prefix = "@" + config["appservice.namespace.prefix"]
         mxid_suffix = ":" + config["homeserver.domain"]
 
-        self.loop = loop or asyncio.get_event_loop()
-        self.http = http or aiohttp.ClientSession(loop=self.loop)
+        self.http = http
 
+        self.bridge_monitor = BridgeMonitor(server=self)
         self.as_proxy = AppServiceProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                         hs_token=config["appservice.hs_token"], http=self.http,
-                                        loop=self.loop, server=self)
+                                        server=self)
         self.as_http = AppServiceHTTPHandler(http=self.http)
-        self.as_websocket = AppServiceWebsocketHandler()
+        self.as_websocket = AppServiceWebsocketHandler(server=self)
         self.cs_proxy = ClientProxy(server=self, mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                     hs_address=URL(config["homeserver.address"]),
                                     as_token=config["appservice.as_token"], http=self.http,
@@ -65,8 +64,9 @@ class MuxServer:
         await site.start()
 
     async def stop(self) -> None:
-        await self.as_websocket.stop()
-        self.loop.create_task(self.http.close())
+        asyncio.create_task(self.bridge_monitor.stop())
+        asyncio.create_task(self.as_websocket.stop())
+        asyncio.create_task(self.http.close())
         self.log.debug("Stopping web server")
         await self.runner.shutdown()
         await self.runner.cleanup()

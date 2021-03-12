@@ -70,11 +70,11 @@ async def track_events(appservice: 'AppService', events: 'Events') -> None:
                         bridge_type=appservice.prefix, bridge_id=str(appservice.id))
 
 
-def init(input_token: str, input_host: str, input_mxid_suffix: str,
-         session: Optional[aiohttp.ClientSession] = None) -> None:
+def init(input_token: str, input_host: str, input_mxid_suffix: str, session: aiohttp.ClientSession
+         ) -> None:
     global token, host, http, mxid_suffix
     token = input_token
     host = input_host
     mxid_suffix = input_mxid_suffix
-    http = session or aiohttp.ClientSession(loop=asyncio.get_event_loop())
+    http = session
     log.info("Posthog tracking is enabled")
