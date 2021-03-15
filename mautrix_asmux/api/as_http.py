@@ -15,8 +15,10 @@ from .as_proxy import Pong, Events
 class AppServiceHTTPHandler:
     log: logging.Logger = logging.getLogger("mau.api.as_http")
     http: aiohttp.ClientSession
+    mxid_suffix: str
 
-    def __init__(self, http: aiohttp.ClientSession) -> None:
+    def __init__(self, mxid_suffix: str, http: aiohttp.ClientSession) -> None:
+        self.mxid_suffix = mxid_suffix
         self.http = http
 
     async def post_events(self, appservice: AppService, events: Events) -> bool:
@@ -55,7 +57,9 @@ class AppServiceHTTPHandler:
         return False
 
     async def ping(self, appservice: AppService) -> Pong:
-        url = URL(appservice.address) / "_matrix/app/com.beeper.asmux/ping"
+        url = (URL(appservice.address) / "_matrix/app/com.beeper.asmux/ping").with_query({
+            "user_id": f"@{appservice.owner}{self.mxid_suffix}",
+        })
         headers = {"Authorization": f"Bearer {appservice.hs_token}"}
         try:
             resp = await self.http.post(url, headers=headers, timeout=ClientTimeout(total=30))

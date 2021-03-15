@@ -64,7 +64,6 @@ class BridgeMonitor:
             results[bridge] = await task
         return {"not_found": not_found, "pongs": results}
 
-
     # Handles /_matrix/asmux/user/{id}/bridge_state
     # Used by clients to listen to real-time bridge connection state changes
     async def handle_ws(self, req: web.Request) -> web.WebSocketResponse:

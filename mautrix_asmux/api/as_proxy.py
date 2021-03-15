@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, List, Dict, NamedTuple, TypedDict, TYPE_CHECKING
+from typing import Optional, List, Dict, NamedTuple, TypedDict, Any, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
@@ -42,6 +42,7 @@ class Pong(TypedDict, total=False):
     error_source: str
     error: str
     message: str
+    data: Optional[Dict[str, Any]]
 
 
 class AppServiceProxy(AppServiceServerMixin):

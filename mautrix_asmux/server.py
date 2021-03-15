@@ -42,7 +42,7 @@ class MuxServer:
         self.as_proxy = AppServiceProxy(mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                         hs_token=config["appservice.hs_token"], http=self.http,
                                         server=self)
-        self.as_http = AppServiceHTTPHandler(http=self.http)
+        self.as_http = AppServiceHTTPHandler(mxid_suffix=mxid_suffix, http=self.http)
         self.as_websocket = AppServiceWebsocketHandler(server=self)
         self.cs_proxy = ClientProxy(server=self, mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
                                     hs_address=URL(config["homeserver.address"]),
