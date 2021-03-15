@@ -49,6 +49,7 @@ class AppServiceWebsocketHandler:
         if az.push:
             raise Error.appservice_ws_not_enabled
         ws = WebsocketHandler(type_name="Websocket transaction connection",
+                              proto="fi.mau.as_sync",
                               log=self.log.getChild(az.name))
         ws.set_handler("bridge_status", functools.partial(self.handle_status, az=az))
         await ws.prepare(req)

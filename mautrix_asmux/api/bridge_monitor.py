@@ -73,6 +73,7 @@ class BridgeMonitor:
         self._prev_ws_id += 1
         ws_id = self._prev_ws_id
         ws = WebsocketHandler(type_name="Bridge monitor websocket connection",
+                              proto="com.beeper.asmux.bridge_state",
                               log=self.log.getChild(f"{ws_id}-{user.id}"))
         ws.set_handler("ping_bridges", functools.partial(self.handle_ping, user=user))
         await ws.prepare(req)

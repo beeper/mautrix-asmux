@@ -48,6 +48,10 @@ class ManagementAPI:
     hs_address: URL
     as_token: str
 
+    app: web.Application
+    mxauth_app: web.Application
+    websocket_app: web.Application
+
     def __init__(self, config: Config, http: ClientSession, server: 'MuxServer') -> None:
         self.global_prefix = config["appservice.namespace.prefix"]
         self.exclusive = config["appservice.namespace.exclusive"]
@@ -75,6 +79,10 @@ class ManagementAPI:
         self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
         self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
 
+        self.websocket_app = web.Application(middlewares=[self.check_ws_auth])
+        self.websocket_app.router.add_get("/user/{id}/bridge_state",
+                                          server.bridge_monitor.handle_ws)
+
         self._cors = {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "Authorization, Content-Type",
@@ -94,6 +102,26 @@ class ManagementAPI:
             raise Error.missing_auth_header
         if auth != self.shared_secret:
             await callback(req, auth)
+        resp = await handler(req)
+        resp.headers.update(self._cors)
+        return resp
+
+    async def _check_auth_websocket(self, req: web.Request, handler: Handler,
+                                    callback: AuthCallback, prefix: str = "com.beeper.asmux.auth-"
+                                    ) -> web.Response:
+        if req.method == "OPTIONS":
+            return web.Response(headers=self._cors)
+        try:
+            for proto in req.headers["Sec-WebSocket-Protocol"].split(","):
+                proto = proto.strip()
+                if proto.startswith(prefix):
+                    auth = proto[len(prefix):]
+                    break
+            else:
+                raise Error.invalid_auth_header
+        except KeyError:
+            raise Error.missing_auth_header
+        await callback(req, auth)
         resp = await handler(req)
         resp.headers.update(self._cors)
         return resp
@@ -123,6 +151,10 @@ class ManagementAPI:
     @web.middleware
     async def check_mx_auth(self, req: web.Request, handler: Handler) -> web.Response:
         return await self._check_auth_generic(req, handler, self._mx_auth_callback)
+
+    @web.middleware
+    async def check_ws_auth(self, req: web.Request, handler: Handler) -> web.Response:
+        return await self._check_auth_websocket(req, handler, self._normal_auth_callback)
 
     def _make_registration(self, az: AppService) -> JSON:
         prefix = f"{re.escape(self.global_prefix)}{re.escape(az.owner)}_{re.escape(az.prefix)}"

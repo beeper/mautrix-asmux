@@ -19,9 +19,9 @@ class WebsocketHandler:
     _command_handlers: Dict[str, CommandHandler]
     _prev_req_id: int
 
-    def __init__(self, type_name: str, log: logging.Logger) -> None:
+    def __init__(self, type_name: str, log: logging.Logger, proto: str) -> None:
         self.type_name = type_name
-        self._ws = web.WebSocketResponse()
+        self._ws = web.WebSocketResponse(protocols=(proto,))
         self.log = log
         self._prev_req_id = 0
         self._request_waiters = {}
