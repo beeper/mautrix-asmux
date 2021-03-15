@@ -129,7 +129,8 @@ class BridgeMonitor:
                 pong["message"] = "Ping returned unknown error"
 
     async def _notify_listeners(self, appservice: AppService, pong: Pong) -> None:
-        tasks = [ws.send(appservice=appservice.prefix, pong=pong)
+        data = {"appservice": appservice.prefix, **pong}
+        tasks = [ws.send(command="bridge_status", data=data)
                  for ws in self._listeners[appservice.owner].values()]
         self.log.debug(f"Broadcasting {appservice.name} pong to websockets: {pong}")
         await asyncio.gather(*tasks)
