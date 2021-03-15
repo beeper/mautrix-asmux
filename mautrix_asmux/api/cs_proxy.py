@@ -186,14 +186,17 @@ class ClientProxy:
 
     async def proxy_login(self, req: web.Request) -> web.Response:
         body = await req.read()
-        headers = req.headers
+        headers = req.headers.copy()
+        try:
+            del headers["Host"]
+        except KeyError:
+            pass
         json_body = await req.json()
         if json_body.get("type") != "m.login.password":
             return await self.proxy(req, _spec_override="client", _path_override="r0/login",
                                     _body_override=body)
         if await self.convert_login_password(json_body):
             body = json.dumps(json_body)
-            headers = headers.copy()
             headers["Content-Type"] = "application/json"
             # TODO remove this everywhere (in _proxy)?
             del headers["Content-Length"]
@@ -209,7 +212,12 @@ class ClientProxy:
         az = await self.find_appservice(req)
         if not az:
             req["proxy_for"] = "<no auth>"
-            return await self._proxy(req, url, body=_body_override)
+            no_host_headers = req.headers.copy()
+            try:
+                del no_host_headers["Host"]
+            except KeyError:
+                pass
+            return await self._proxy(req, url, headers=no_host_headers, body=_body_override)
         req["proxy_for"] = az.name
 
         headers, query = self._copy_data(req, az)
