@@ -92,7 +92,7 @@ class AppServiceWebsocketHandler:
             return {"ok": False, "error_source": "asmux", "error": "websocket-not-connected",
                     "message": "The bridge does not have an active websocket connection to asmux"}
         try:
-            pong = await asyncio.wait_for(ws.request("ping"), timeout=30)
+            pong = await asyncio.wait_for(ws.request("ping"), timeout=45)
         except asyncio.TimeoutError:
             return {"ok": False, "error_source": "asmux", "error": "io-timeout",
                     "message": "Timeout while waiting for ping response"}

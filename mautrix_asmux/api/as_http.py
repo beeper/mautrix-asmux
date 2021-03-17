@@ -62,7 +62,7 @@ class AppServiceHTTPHandler:
         })
         headers = {"Authorization": f"Bearer {appservice.hs_token}"}
         try:
-            resp = await self.http.post(url, headers=headers, timeout=ClientTimeout(total=30))
+            resp = await self.http.post(url, headers=headers, timeout=ClientTimeout(total=45))
         except asyncio.TimeoutError:
             return {"ok": False, "error_source": "asmux", "error": "io-timeout",
                     "message": "Timeout while waiting for ping response"}
