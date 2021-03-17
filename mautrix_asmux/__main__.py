@@ -2,7 +2,7 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 import sys
 
-from aiohttp import ClientSession, TCPConnector
+from aiohttp import ClientSession, TCPConnector, DummyCookieJar
 
 from mautrix.util.program import Program
 from mautrix.util.async_db import Database
@@ -60,7 +60,7 @@ class AppServiceMux(Program):
 
     async def _create_client(self) -> ClientSession:
         conn = TCPConnector(limit=0)
-        return ClientSession(loop=self.loop, connector=conn)
+        return ClientSession(loop=self.loop, connector=conn, cookie_jar=DummyCookieJar())
 
     def prepare_config(self) -> None:
         self.config = self.config_class(self.args.config, self.args.registration,
