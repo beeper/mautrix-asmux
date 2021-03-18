@@ -152,7 +152,7 @@ class BridgeMonitor:
         async with self._locks[appservice.id]:
             try:
                 pong = self._status[appservice.id]
-                if pong["timestamp"] + pong["ttl"] < int(time.time()):
+                if pong["timestamp"] + pong["ttl"] > int(time.time()):
                     if always_notify:
                         asyncio.create_task(self._notify_listeners(appservice, pong))
                     return pong
