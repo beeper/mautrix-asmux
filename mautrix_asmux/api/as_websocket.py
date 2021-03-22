@@ -68,7 +68,7 @@ class AppServiceWebsocketHandler:
                 if not self._stopping:
                     asyncio.create_task(self.server.bridge_monitor.set_pong(az, {
                         "ok": False, "error_source": "asmux", "error": "websocket-not-connected",
-                        "message": "The bridge disconnected from asmux"
+                        "message": "The bridge is not connected to the server"
                     }))
         return ws.response
 
