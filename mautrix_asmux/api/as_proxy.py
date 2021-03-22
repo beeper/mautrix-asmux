@@ -125,7 +125,7 @@ class AppServiceProxy(AppServiceServerMixin):
                 data[room.owner].pdu.append(event)
                 data[room.owner].types.append(event.get("type", ""))
             else:
-                self.log.warning(f"No target found for event in {room_id}")
+                self.log.debug(f"No target found for event in {room_id}")
                 DROPPED_EVENTS.labels(type=event.get("type", "")).inc()
         for event in ephemeral or []:
             RECEIVED_EVENTS.labels(type=event.get("type", "")).inc()

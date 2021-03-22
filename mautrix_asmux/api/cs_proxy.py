@@ -303,7 +303,7 @@ class ClientProxy:
                                            params=query or req.query.copy(),
                                            data=body or req.content)
         except aiohttp.ClientError as e:
-            self.log.debug(f"{type(e).__name__} proxying request {self.request_log_fmt(req)}: {e}")
+            self.log.warning(f"{type(e).__name__} proxying request {self.request_log_fmt(req)}: {e}")
             raise Error.failed_to_contact_homeserver
         finally:
             REQUESTS_HANDLED.labels(**metric_labels).inc()
