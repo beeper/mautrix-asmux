@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from ..server import MuxServer
 
 
+WS_CLOSE_REPLACED = 4001
+
+
 class AppServiceWebsocketHandler:
     log: logging.Logger = logging.getLogger("mau.api.as_websocket")
     websockets: Dict[UUID, WebsocketHandler]
@@ -56,7 +59,7 @@ class AppServiceWebsocketHandler:
         log = self.log.getChild(az.name)
         if az.id in self.websockets:
             log.debug(f"New websocket connection coming in, closing old one")
-            await self.websockets[az.id].close(code=WSCloseCode.OK, status="conn_replaced")
+            await self.websockets[az.id].close(code=WS_CLOSE_REPLACED, status="conn_replaced")
         try:
             self.websockets[az.id] = ws
             await self.server.bridge_monitor.set_pong(az, None)

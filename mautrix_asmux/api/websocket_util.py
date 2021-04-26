@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Dict, Optional, Any, Callable, Awaitable
+from typing import Dict, Optional, Any, Callable, Awaitable, Union
 import logging
 import asyncio
 import json
@@ -92,7 +92,7 @@ class WebsocketHandler:
             self.log.debug(f"Received {command} {req_id or '<no id>'}: {data}")
             asyncio.create_task(self._call_handler(handler, command, req_id, data))
 
-    async def close(self, code: WSCloseCode, status: Optional[str] = None) -> None:
+    async def close(self, code: Union[int, WSCloseCode], status: Optional[str] = None) -> None:
         message = (json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
                    if status else None)
         try:

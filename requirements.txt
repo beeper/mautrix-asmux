@@ -1,7 +1,7 @@
 asyncpg>=0.20,<0.23
 ruamel.yaml>=0.15.35,<0.17
-aiohttp>=3,<4
-mautrix>=0.8,<0.9
+aiohttp>=3,<3.7
+mautrix>=0.9,<0.10
 yarl>=1,<2
 multidict<5
 prometheus_client>=0.6,<0.10
