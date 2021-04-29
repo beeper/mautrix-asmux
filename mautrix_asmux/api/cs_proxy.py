@@ -256,12 +256,12 @@ class ClientProxy:
             else:
                 return f"/rooms/.../{parts[6]}"
         elif path.startswith("/_matrix/client/r0/user/") and len(parts) > 6:
-            if len(parts) > 8 and parts[6] == "rooms" and parts[8] == "account_data":
-                return f"/user/.../rooms/.../account_data/..."
-            elif parts[6] == "account_data":
-                return f"/user/.../account_data/..."
+            if len(parts) > 8 and parts[6] == "rooms":
+                end = "/..." if len(parts) > 9 else ""
+                return f"/user/.../rooms/.../{parts[8]}{end}"
             else:
-                return f"/user/.../{'/'.join(parts[6:])}"
+                end = "/..." if len(parts) > 7 else ""
+                return f"/user/.../{parts[6]}{end}"
         elif path.startswith("/_matrix/client/r0/directory/room/"):
             return "/directory/room/..."
         elif path.startswith("/_matrix/client/r0/directory/list/room/"):
