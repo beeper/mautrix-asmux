@@ -11,7 +11,7 @@ from . import __version__
 from .config import Config
 from .server import MuxServer
 from .database import Base, upgrade_table
-from .posthog import init as init_posthog
+from .segment import init as init_segment
 
 
 class AppServiceMux(Program):
@@ -54,8 +54,8 @@ class AppServiceMux(Program):
         Base.db = self.database
         self.client = self.loop.run_until_complete(self._create_client())
         self.server = MuxServer(self.config, http=self.client)
-        if self.config["posthog.token"]:
-            init_posthog(self.config["posthog.token"], self.config["posthog.host"],
+        if self.config["segment.token"]:
+            init_segment(self.config["segment.token"], self.config["segment.host"],
                          ":" + self.config["homeserver.domain"], self.client)
 
     async def _create_client(self) -> ClientSession:

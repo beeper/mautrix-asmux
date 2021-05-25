@@ -2,7 +2,6 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import Optional, TYPE_CHECKING
 import logging
-import asyncio
 import time
 
 import aiohttp
@@ -13,9 +12,9 @@ if TYPE_CHECKING:
     from .database import AppService
     from .api.as_proxy import Events
 
-log = logging.getLogger("mau.posthog")
+log = logging.getLogger("mau.segment")
 token: Optional[str] = None
-host: str = "app.posthog.com"
+host: str = "api.segment.io"
 http: aiohttp.ClientSession
 mxid_suffix: str
 
@@ -24,14 +23,11 @@ async def track(event: str, user_id: str, **properties: str) -> None:
     if not token:
         return
     try:
-        await http.post(URL.build(scheme="https", host=host, path="/capture/"), json={
-            "api_key": token,
+        await http.post(URL.build(scheme="https", host=host, path="/v1/track"), json={
+            "userId": user_id,
             "event": event,
-            "properties": {
-                **properties,
-                "distinct_id": user_id,
-            },
-        })
+            "properties": properties,
+        }, auth=aiohttp.BasicAuth(login=token, encoding="utf-8"))
         log.debug(f"Tracked {event} from {user_id}")
     except Exception:
         log.exception(f"Failed to track {event} from {user_id}")
@@ -77,4 +73,4 @@ def init(input_token: str, input_host: str, input_mxid_suffix: str, session: aio
     host = input_host
     mxid_suffix = input_mxid_suffix
     http = session
-    log.info("Posthog tracking is enabled")
+    log.info("Segment tracking is enabled")

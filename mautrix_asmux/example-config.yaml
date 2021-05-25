@@ -33,9 +33,9 @@ appservice:
         # Whether or not the prefix should be exclusively for asmux (and the services behind it).
         exclusive: true
 
-posthog:
+segment:
     token: null
-    host: app.posthog.com
+    host: api.segment.io
 
 metrics:
     enabled: true

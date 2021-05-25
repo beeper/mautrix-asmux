@@ -13,7 +13,7 @@ from mautrix.appservice import AppServiceServerMixin
 from mautrix.util.opt_prometheus import Counter
 
 from ..database import Room, AppService
-from ..posthog import track_events
+from ..segment import track_events
 
 if TYPE_CHECKING:
     from ..server import MuxServer

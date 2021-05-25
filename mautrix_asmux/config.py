@@ -60,8 +60,8 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         copy("appservice.as_token")
         copy("appservice.hs_token")
 
-        copy("posthog.token")
-        copy("posthog.host")
+        copy("segment.token")
+        copy("segment.host")
 
         copy("metrics.enabled")
         copy("metrics.port")
