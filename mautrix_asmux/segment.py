@@ -1,6 +1,7 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Dict, TYPE_CHECKING
+from collections import defaultdict
 import logging
 import time
 
@@ -18,17 +19,29 @@ host: str = "api.segment.io"
 http: aiohttp.ClientSession
 mxid_suffix: str
 
+per_user_counter: Dict[str, int] = defaultdict(lambda: 0)
+per_user_event_counter: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(lambda: 0))
+
 
 async def track(event: str, user_id: str, **properties: str) -> None:
     if not token:
         return
     try:
+        per_user_counter[user_id] += 1
+        per_user_event_counter[user_id][event] += 1
+        remote_count = per_user_event_counter[user_id]["Outgoing remote event"]
+        matrix_count = per_user_event_counter[user_id]["Outgoing Matrix event"]
+        properties["counter_user"] = str(per_user_counter[user_id])
+        properties["counter_remote_event"] = str(remote_count)
+        properties["counter_matrix_event"] = str(matrix_count)
+        if matrix_count or remote_count:
+            properties["counter_matrix_share"] = str(matrix_count / (matrix_count + remote_count))
         await http.post(URL.build(scheme="https", host=host, path="/v1/track"), json={
             "userId": user_id,
             "event": event,
             "properties": properties,
         }, auth=aiohttp.BasicAuth(login=token, encoding="utf-8"))
-        log.debug(f"Tracked {event} from {user_id}")
+        log.debug(f"Tracked {event} from {user_id} with {properties}")
     except Exception:
         log.exception(f"Failed to track {event} from {user_id}")
 
