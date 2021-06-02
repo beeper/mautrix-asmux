@@ -69,6 +69,8 @@ class ManagementAPI:
         self.app.router.add_get("/user/{id}/bridge_state", server.bridge_monitor.handle_ws)
         self.app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
         self.app.router.add_put("/user/{id}/proxy", self.put_user_proxy)
+        self.app.router.add_post("/appservice/{id}/ping", self.ping_appservice)
+        self.app.router.add_post("/appservice/{owner}/{prefix}/ping", self.ping_appservice)
         self.app.router.add_put("/appservice/{id}", self.provision_appservice)
         self.app.router.add_put("/appservice/{owner}/{prefix}", self.provision_appservice)
         self.app.router.add_get("/appservice/{id}", self.get_appservice)
@@ -268,6 +270,11 @@ class ManagementAPI:
     async def get_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)
         return web.json_response(self._make_registration(az))
+
+    async def ping_appservice(self, req: web.Request) -> web.Response:
+        az = await self._get_appservice(req)
+        pong = await self.server.bridge_monitor.ping(az, always_notify=True)
+        return web.json_response(pong)
 
     async def delete_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)
