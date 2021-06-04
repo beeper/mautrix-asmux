@@ -57,7 +57,7 @@ class AppServiceHTTPHandler:
         return False
 
     async def ping(self, appservice: AppService) -> Pong:
-        url = (URL(appservice.address) / "_matrix/app/com.beeper.asmux/ping").with_query({
+        url = (URL(appservice.address) / "_matrix/app/com.beeper.bridge_state").with_query({
             "user_id": f"@{appservice.owner}{self.mxid_suffix}",
         })
         headers = {"Authorization": f"Bearer {appservice.hs_token}"}
