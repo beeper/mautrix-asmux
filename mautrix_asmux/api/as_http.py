@@ -5,7 +5,7 @@ import asyncio
 import json
 
 from yarl import URL
-from aiohttp import ClientError, ClientTimeout
+from aiohttp import ClientError, ClientTimeout, ContentTypeError
 import aiohttp
 
 from ..database import AppService
@@ -75,7 +75,7 @@ class AppServiceHTTPHandler:
                     "message": f"Fatal error while pinging: {e}"}
         try:
             return await resp.json()
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ContentTypeError):
             if resp.status >= 300:
                 return {"ok": False, "error_source": "asmux", "error": f"ping-http-{resp.status}",
                         "message": f"Ping returned non-JSON body and HTTP {resp.status}"}
