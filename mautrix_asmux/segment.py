@@ -75,7 +75,7 @@ async def track_events(appservice: 'AppService', events: 'Events') -> None:
     for event in events.pdu:
         event_type = _get_tracking_event_type(appservice, event)
         if event_type:
-            await track(event_type, event["sender"],
+            await track(event_type, event["sender"], network=appservice.prefix,
                         bridge_type=appservice.prefix, bridge_id=str(appservice.id))
 
 
