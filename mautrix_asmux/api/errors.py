@@ -41,6 +41,16 @@ class _ErrorMeta:
                                                     "Invalid authorization token"))
 
     @property
+    def invalid_config_password(self) -> web.HTTPException:
+        return web.HTTPForbidden(**self._make_error("M_UNKNOWN_TOKEN",
+                                                    "Invalid config download password"))
+
+    @property
+    def config_download_unsupported(self) -> web.HTTPException:
+        return web.HTTPNotFound(**self._make_error(
+            "COM.BEEPER.NO_CONFIG_DOWNLOAD", "That bridge does not downloading generated configs"))
+
+    @property
     def appservice_access_denied(self) -> web.HTTPException:
         return web.HTTPUnauthorized(**self._make_error(
             "M_UNAUTHORIZED", "You are not authorized to access that appservice"))
@@ -48,13 +58,13 @@ class _ErrorMeta:
     @property
     def appservice_ws_not_enabled(self) -> web.HTTPException:
         return web.HTTPUnauthorized(**self._make_error(
-            "FI.MAU.TXN_WS_NOT_ENABLED", "This appservice is not marked to use websocket for "
-                                         "receiving transactions."))
+            "COM.BEEPER.TXN_WS_NOT_ENABLED", "This appservice is not marked to use websocket for "
+                                             "receiving transactions."))
 
     @property
     def server_shutting_down(self) -> web.HTTPException:
         return web.HTTPServiceUnavailable(**self._make_error(
-            "FI.MAU.SHUTTING_DOWN", "The server is shutting down. Please try again later."))
+            "COM.BEEPER.SHUTTING_DOWN", "The server is shutting down. Please try again later."))
 
     @property
     def user_access_denied(self) -> web.HTTPException:

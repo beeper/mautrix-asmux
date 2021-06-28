@@ -69,10 +69,13 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         copy("mux.hostname")
         copy("mux.port")
         copy("mux.database")
+        copy("mux.public_address")
         if self.get("mux.shared_secret", "generate") == "generate":
             base["mux.shared_secret"] = self._new_token()
         else:
             copy("mux.shared_secret")
+
+        copy("mux.bridge_config_template_files")
 
         copy("logging")
 

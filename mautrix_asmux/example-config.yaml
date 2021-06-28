@@ -50,8 +50,12 @@ mux:
     port: 29326
     # Database URI. Currently only supports postgres://user:password@host/dbname
     database: postgres:///mautrix-asmux
+    # Public address to reach asmux
+    public_address: https://asmux.example.com
     # Shared secret for accessing the API
     shared_secret: generate
+    # Config template files for embedded bridges like iOS iMessage
+    bridge_config_template_files: {}
 
 # Python logging configuration.
 #

@@ -1,16 +1,21 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Callable, Awaitable, Optional, TYPE_CHECKING
+from typing import Callable, Awaitable, Optional, Dict, TYPE_CHECKING
 from uuid import UUID
 import logging
+import base64
 import json
+import copy
+import io
 import re
 
+from ruamel.yaml.comments import CommentedMap
 from aiohttp import web, ClientSession
 from yarl import URL
 
 from mautrix.types import JSON
 from mautrix.client import ClientAPI
+from mautrix.util.config import yaml, RecursiveDict
 
 from ..database import AppService, User
 from ..config import Config
@@ -23,6 +28,10 @@ part_regex = re.compile("^[a-z0-9=.-]{1,32}$")
 
 Handler = Callable[[web.Request], Awaitable[web.Response]]
 AuthCallback = Callable[[web.Request, str], Awaitable[None]]
+
+DEFAULT_CFG_LIFETIME = 5 * 60
+MIN_CFG_LIFETIME = 30
+MAX_CFG_LIFETIME = 60 * 60
 
 
 class UUIDEncoder(json.JSONEncoder):
@@ -46,10 +55,14 @@ class ManagementAPI:
     server_name: str
     shared_secret: str
     hs_address: URL
+    public_address: URL
+    namespace_prefix: str
+    config_templates: Dict[str, RecursiveDict]
     as_token: str
 
     app: web.Application
     mxauth_app: web.Application
+    public_app: web.Application
     websocket_app: web.Application
 
     def __init__(self, config: Config, http: ClientSession, server: 'MuxServer') -> None:
@@ -58,7 +71,14 @@ class ManagementAPI:
         self.server_name = config["homeserver.domain"]
         self.shared_secret = config["mux.shared_secret"]
         self.hs_address = URL(config["homeserver.address"])
+        self.public_address = URL(config["mux.public_address"])
         self.as_token = config["appservice.as_token"]
+        self.namespace_prefix = config["appservice.namespace.prefix"]
+        self.config_templates = {}
+
+        for bridge, file in config["mux.bridge_config_template_files"].items():
+            with open(file, "r") as stream:
+                self.config_templates[bridge] = RecursiveDict(yaml.load(stream), CommentedMap)
 
         self.http = http
         self.server = server
@@ -80,6 +100,10 @@ class ManagementAPI:
 
         self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
         self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
+
+        self.public_app = web.Application()
+        self.public_app.router.add_get("/config/{prefix}/register", self.register_config)
+        self.public_app.router.add_get("/config/{prefix}/download", self.download_config)
 
         self.websocket_app = web.Application(middlewares=[self.check_ws_auth])
         self.websocket_app.router.add_get("/user/{id}/bridge_state",
@@ -158,14 +182,19 @@ class ManagementAPI:
     async def check_ws_auth(self, req: web.Request, handler: Handler) -> web.Response:
         return await self._check_auth_websocket(req, handler, self._normal_auth_callback)
 
-    def _make_registration(self, az: AppService) -> JSON:
+    def _make_registration(self, az: AppService, config_password: Optional[str] = None,
+                           config_password_lifetime: Optional[int] = None) -> JSON:
         prefix = f"{re.escape(self.global_prefix)}{re.escape(az.owner)}_{re.escape(az.prefix)}"
         server_name = re.escape(self.server_name)
-        return {
+        registration = {
             "id": str(az.id),
-            "as_token": f"{az.id}-{az.as_token}",
+            "as_token": az.real_as_token,
             "hs_token": az.hs_token,
+            # TODO deprecate this in favor of the one below
             "login_shared_secret": az.login_token,
+            "com.beeper.asmux": {
+                "login_shared_secret": az.login_token,
+            },
             "namespaces": {
                 "users": [{
                     "regex": f"@{prefix}_.+:{server_name}",
@@ -180,6 +209,10 @@ class ManagementAPI:
             "sender_localpart": f"{prefix}_{re.escape(az.bot)}",
             "rate_limited": True,
         }
+        if config_password:
+            registration["com.beeper.asmux"]["config_password"] = config_password
+            registration["com.beeper.asmux"]["config_password_lifetime"] = config_password_lifetime
+        return registration
 
     async def _get_appservice(self, req: web.Request) -> AppService:
         try:
@@ -319,12 +352,74 @@ class ManagementAPI:
                 except Exception:
                     self.log.warning(f"Failed to register bridge bot {owner}_{prefix}_{az.bot}",
                                      exc_info=True)
-                self.log.info(f"Created appservice {owner}/{prefix} ({az.id})")
+                self.log.info(f"Created appservice {az.name} ({az.id})")
         else:
             az = self._error_wrap(req, await AppService.get(uuid))
         if not az.created_:
             await az.set_address(data.get("address"))
             await az.set_push(data.get("push"))
+        config_password = None
+        lifetime = None
+        if data.get("generate_config"):
+            if az.prefix not in self.config_templates:
+                raise Error.config_download_unsupported
+            lifetime = data.get("config_password_lifetime", DEFAULT_CFG_LIFETIME)
+            lifetime = max(min(lifetime, MAX_CFG_LIFETIME), MIN_CFG_LIFETIME)
+            config_password = await az.generate_password(lifetime)
         status = 201 if az.created_ else 200
         az.created_ = False
-        return web.json_response(self._make_registration(az), status=status)
+        return web.json_response(self._make_registration(az, config_password, lifetime),
+                                 status=status)
+
+    @staticmethod
+    async def _authorize_config_download(req: web.Request) -> AppService:
+        try:
+            prefix = req.match_info["prefix"]
+        except KeyError:
+            raise Error.missing_fields
+        try:
+            header = req.headers["Authorization"].removeprefix("Basic ")
+            username, password = (base64.b64decode(header)
+                                  .decode("utf-8")
+                                  .split(":", 1))
+        except (KeyError, ValueError, TypeError):
+            raise Error.invalid_auth_header
+        az = await AppService.find(username, prefix)
+        if az is None:
+            raise Error.appservice_not_found
+        if not az.check_password(password):
+            raise Error.invalid_config_password
+        return az
+
+    async def register_config(self, req: web.Request) -> web.Response:
+        az = await self._authorize_config_download(req)
+        new_password = await az.generate_password(lifetime=None)
+        self.log.debug(f"Generated new config download password for {az.name}")
+        config_url = (req.url.with_path(f"/_matrix/asmux/public/config/{az.prefix}/download")
+                      .with_user(az.owner).with_password(new_password))
+        return web.Response(status=303, headers={"Location": str(config_url)})
+
+    def _configure_imessage(self, az: AppService) -> str:
+        config = copy.deepcopy(self.config_templates["imessage"])
+        config["homeserver.address"] = str(self.public_address)
+        config["homeserver.websocket_proxy"] = str(self.public_address.with_scheme("wss"))
+        config["homeserver.domain"] = self.server_name
+        config["homeserver.asmux"] = True
+
+        config["appservice.id"] = str(az.id)
+        config["appservice.bot.username"] = f"_{az.owner}_{az.prefix}_{az.bot}"
+        config["appservice.as_token"] = az.real_as_token
+        config["appservice.hs_token"] = az.hs_token
+        config["bridge.user"] = f"@{az.owner}:{self.server_name}"
+        config["bridge.username_template"] = (f"@{self.namespace_prefix}{az.owner}_{az.prefix}_"
+                                              "{{.}}"
+                                              f":{self.server_name}")
+        config["bridge.login_shared_secret"] = az.login_token
+        with io.StringIO() as output:
+            yaml.dump(config._data, output)
+            return output.getvalue()
+
+    async def download_config(self, req: web.Request) -> web.Response:
+        az = await self._authorize_config_download(req)
+        return web.Response(status=200, content_type="text/yaml",
+                            body=self._configure_imessage(az))
