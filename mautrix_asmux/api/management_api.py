@@ -413,9 +413,7 @@ class ManagementAPI:
         config["appservice.as_token"] = az.real_as_token
         config["appservice.hs_token"] = az.hs_token
         config["bridge.user"] = f"@{az.owner}:{self.server_name}"
-        config["bridge.username_template"] = (f"@{self.namespace_prefix}{az.owner}_{az.prefix}_"
-                                              "{{.}}"
-                                              f":{self.server_name}")
+        config["bridge.username_template"] = (f"{self.namespace_prefix}{az.owner}_{az.prefix}_" "{{.}}")
         config["bridge.login_shared_secret"] = az.login_token
         with io.StringIO() as output:
             yaml.dump(config._data, output)
