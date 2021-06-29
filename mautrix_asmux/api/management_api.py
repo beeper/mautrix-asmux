@@ -396,7 +396,7 @@ class ManagementAPI:
         new_password = await az.generate_password(lifetime=None)
         self.log.debug(f"Generated new config download password for {az.name}")
         config_url = (req.url.with_path(f"/_matrix/asmux/public/config/{az.prefix}/download")
-                      .with_user(az.owner).with_password(new_password))
+                      .with_user(az.owner).with_password(new_password).with_scheme("https"))
         return web.Response(status=303, headers={"Location": str(config_url)})
 
     def _configure_imessage(self, az: AppService) -> str:
