@@ -56,6 +56,9 @@ mux:
     shared_secret: generate
     # Config template files for embedded bridges like iOS iMessage
     bridge_config_template_files: {}
+    # Endpoint for reporting bridge status.
+    # Currently used for reporting transaction websocket disconnections.
+    status_endpoint: null
 
 # Python logging configuration.
 #

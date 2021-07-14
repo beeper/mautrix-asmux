@@ -15,6 +15,7 @@ from yarl import URL
 
 from mautrix.types import JSON
 from mautrix.client import ClientAPI
+from mautrix.util.bridge_state import BridgeState
 from mautrix.util.config import yaml, RecursiveDict
 
 from ..database import AppService, User
@@ -32,6 +33,19 @@ AuthCallback = Callable[[web.Request, str], Awaitable[None]]
 DEFAULT_CFG_LIFETIME = 5 * 60
 MIN_CFG_LIFETIME = 30
 MAX_CFG_LIFETIME = 60 * 60
+
+
+BridgeState.default_error_source = "asmux"
+BridgeState.human_readable_errors.update({
+    "ping-no-remote": "Couldn't make ping: no address configured",
+    "websocket-not-connected": "The bridge is not connected to the server",
+    "io-timeout": "Timeout while waiting for ping response",
+    "http-connection-error": "HTTP client error while pinging: {message}",
+    "ping-fatal-error": "Fatal error while pinging: {message}",
+    "websocket-fatal-error": "Fatal error while pinging through websocket: {message}",
+    "http-fatal-error": "Fatal error while pinging through HTTP: {message}",
+    "http-not-json": "Non-JSON ping response",
+})
 
 
 class UUIDEncoder(json.JSONEncoder):
@@ -86,7 +100,6 @@ class ManagementAPI:
         self.app = web.Application(middlewares=[self.check_auth])
         self.app.router.add_get("/user/{id}", self.get_user)
         self.app.router.add_put("/user/{id}", self.put_user)
-        self.app.router.add_get("/user/{id}/bridge_state", server.bridge_monitor.handle_ws)
         self.app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
         self.app.router.add_put("/user/{id}/proxy", self.put_user_proxy)
         self.app.router.add_post("/appservice/{id}/ping", self.ping_appservice)
@@ -106,8 +119,6 @@ class ManagementAPI:
         self.public_app.router.add_get("/config/{prefix}/download", self.download_config)
 
         self.websocket_app = web.Application(middlewares=[self.check_ws_auth])
-        self.websocket_app.router.add_get("/user/{id}/bridge_state",
-                                          server.bridge_monitor.handle_ws)
 
         self._cors = {
             "Access-Control-Allow-Origin": "*",
@@ -306,8 +317,20 @@ class ManagementAPI:
 
     async def ping_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)
-        pong = await self.server.bridge_monitor.ping(az, always_notify=True)
-        return web.json_response(pong)
+        remote_id = req.query.get("remote_id")
+
+        try:
+            if not az.push:
+                pong = await self.server.as_websocket.ping(az, remote_id)
+            elif az.address:
+                pong = await self.server.as_http.ping(az, remote_id)
+            else:
+                self.log.warning(f"Not pinging {az.name}: no address configured")
+                pong = BridgeState(ok=False, error="ping-no-remote").fill()
+        except Exception as e:
+            self.log.exception(f"Fatal error pinging {az.name}")
+            pong = BridgeState(ok=False, error="ping-fatal-error", message=str(e)).fill()
+        return web.json_response(pong.serialize())
 
     async def delete_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)

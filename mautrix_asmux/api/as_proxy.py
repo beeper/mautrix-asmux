@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, List, Dict, NamedTuple, TypedDict, Any, TYPE_CHECKING
+from typing import Optional, List, Dict, NamedTuple, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
@@ -33,16 +33,6 @@ SUCCESSFUL_EVENTS = Counter("asmux_successful_events",
 FAILED_EVENTS = Counter("asmux_failed_events",
                         "Number of PDUs that were successfully sent to the target appservice",
                         labelnames=["owner", "bridge", "type"])
-
-
-class Pong(TypedDict, total=False):
-    ok: bool
-    timestamp: int
-    ttl: int
-    error_source: str
-    error: str
-    message: str
-    data: Optional[Dict[str, Any]]
 
 
 class AppServiceProxy(AppServiceServerMixin):

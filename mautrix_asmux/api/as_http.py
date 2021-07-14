@@ -8,8 +8,10 @@ from yarl import URL
 from aiohttp import ClientError, ClientTimeout, ContentTypeError
 import aiohttp
 
+from mautrix.util.bridge_state import BridgeState
+
 from ..database import AppService
-from .as_proxy import Pong, Events
+from .as_proxy import Events
 
 
 class AppServiceHTTPHandler:
@@ -56,28 +58,27 @@ class AppServiceHTTPHandler:
                          + last_error)
         return False
 
-    async def ping(self, appservice: AppService) -> Pong:
+    async def ping(self, appservice: AppService, remote_id: str) -> BridgeState:
         url = (URL(appservice.address) / "_matrix/app/com.beeper.bridge_state").with_query({
             "user_id": f"@{appservice.owner}{self.mxid_suffix}",
+            "remote_id": remote_id,
         })
         headers = {"Authorization": f"Bearer {appservice.hs_token}"}
         try:
             resp = await self.http.post(url, headers=headers, timeout=ClientTimeout(total=45))
         except asyncio.TimeoutError:
-            return {"ok": False, "error_source": "asmux", "error": "io-timeout",
-                    "message": "Timeout while waiting for ping response"}
+            return BridgeState(ok=False, error="io-timeout").fill()
         except ClientError as e:
-            return {"ok": False, "error_source": "asmux", "error": "http-connection-error",
-                    "message": f"HTTP client error while pinging: {e}"}
+            return BridgeState(ok=False, error="http-connection-error", message=str(e)).fill()
         except Exception as e:
             self.log.exception(f"Error pinging {appservice.name}")
-            return {"ok": False, "error_source": "asmux", "error": "http-fatal-error",
-                    "message": f"Fatal error while pinging: {e}"}
+            return BridgeState(ok=False, error="http-fatal-error", message=str(e)).fill()
         try:
-            return await resp.json()
+            raw_pong = await resp.json()
         except (json.JSONDecodeError, ContentTypeError):
             if resp.status >= 300:
-                return {"ok": False, "error_source": "asmux", "error": f"ping-http-{resp.status}",
-                        "message": f"Ping returned non-JSON body and HTTP {resp.status}"}
-            return {"ok": False, "error_source": "asmux", "error": "http-not-json",
-                    "message": f"Non-JSON ping response"}
+                return BridgeState(ok=False, error=f"ping-http-{resp.status}",
+                                   message=f"Ping returned non-JSON body and HTTP {resp.status}"
+                                   ).fill()
+            return BridgeState(ok=False, error="http-not-json").fill()
+        return BridgeState.deserialize(raw_pong)

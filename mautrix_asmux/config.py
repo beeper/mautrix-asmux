@@ -44,7 +44,7 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         ] if self._check_tokens else [])
 
     def do_update(self, helper: ConfigUpdateHelper) -> None:
-        copy, _, base = helper
+        copy, copy_dict, base = helper
 
         copy("homeserver.address")
         copy("homeserver.domain")
@@ -75,7 +75,8 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         else:
             copy("mux.shared_secret")
 
-        copy("mux.bridge_config_template_files")
+        copy_dict("mux.bridge_config_template_files")
+        copy("mux.status_endpoint")
 
         copy("logging")
 
