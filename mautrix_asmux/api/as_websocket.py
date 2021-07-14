@@ -87,7 +87,7 @@ class AppServiceWebsocketHandler:
             return False
         self.log.debug(f"Sending transaction {events.txn_id} to {appservice.name} via websocket")
         await ws.send(command="transaction", status="ok",
-                      txn_id=events.txn_id, events=events.pdu, ephemeral=events.edu)
+                      txn_id=events.txn_id, **events.serialize())
         return True
 
     async def ping(self, appservice: AppService, remote_id: str) -> BridgeState:

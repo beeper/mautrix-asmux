@@ -37,7 +37,7 @@ class AppServiceHTTPHandler:
                            f"via HTTP, attempt #{attempt}")
             try:
                 resp = await self.http.put(url.with_query({"access_token": appservice.hs_token}),
-                                           json={"events": events.pdu, "ephemeral": events.edu})
+                                           json=events.serialize())
             except ClientError as e:
                 last_error = e
                 self.log.debug(f"{err_prefix}: {last_error}")
