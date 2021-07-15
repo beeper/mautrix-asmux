@@ -71,7 +71,7 @@ class ManagementAPI:
     hs_address: URL
     public_address: URL
     namespace_prefix: str
-    config_templates: Dict[str, RecursiveDict]
+    config_templates: dict[str, RecursiveDict]
     as_token: str
 
     app: web.Application
@@ -91,7 +91,7 @@ class ManagementAPI:
         self.config_templates = {}
 
         for bridge, file in config["mux.bridge_config_template_files"].items():
-            with open(file, "r") as stream:
+            with open(file) as stream:
                 self.config_templates[bridge] = RecursiveDict(yaml.load(stream), CommentedMap)
 
         self.http = http

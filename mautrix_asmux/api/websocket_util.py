@@ -8,15 +8,15 @@ import json
 from aiohttp import web
 from aiohttp.http import WSMessage, WSMsgType, WSCloseCode
 
-Data = Dict[str, Any]
+Data = dict[str, Any]
 CommandHandler = Callable[['WebsocketHandler', Data], Awaitable[Optional[Data]]]
 
 
 class WebsocketHandler:
     _ws: web.WebSocketResponse
     log: logging.Logger
-    _request_waiters: Dict[int, asyncio.Future]
-    _command_handlers: Dict[str, CommandHandler]
+    _request_waiters: dict[int, asyncio.Future]
+    _command_handlers: dict[str, CommandHandler]
     _prev_req_id: int
 
     def __init__(self, type_name: str, log: logging.Logger, proto: str) -> None:

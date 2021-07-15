@@ -24,13 +24,13 @@ if TYPE_CHECKING:
 @dataclass
 class Events:
     txn_id: str
-    pdu: List[JSON] = attr.ib(factory=lambda: [])
-    edu: List[JSON] = attr.ib(factory=lambda: [])
-    types: List[str] = attr.ib(factory=lambda: [])
-    otk_count: Dict[UserID, DeviceOTKCount] = attr.ib(factory=lambda: {})
+    pdu: list[JSON] = attr.ib(factory=lambda: [])
+    edu: list[JSON] = attr.ib(factory=lambda: [])
+    types: list[str] = attr.ib(factory=lambda: [])
+    otk_count: dict[UserID, DeviceOTKCount] = attr.ib(factory=lambda: {})
     device_lists: DeviceLists = attr.ib(factory=lambda: DeviceLists(changed=[], left=[]))
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(self) -> dict[str, Any]:
         output = {
             "events": self.pdu
         }
@@ -65,7 +65,7 @@ class AppServiceProxy(AppServiceServerMixin):
     hs_token: str
     mxid_prefix: str
     mxid_suffix: str
-    locks: Dict[UUID, asyncio.Lock]
+    locks: dict[UUID, asyncio.Lock]
 
     def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_token: str,
                  http: aiohttp.ClientSession) -> None:
@@ -129,7 +129,7 @@ class AppServiceProxy(AppServiceServerMixin):
         await room.insert()
         return room
 
-    async def _collect_events(self, events: List[JSON], output: Dict[UUID, Events], ephemeral: bool
+    async def _collect_events(self, events: list[JSON], output: dict[UUID, Events], ephemeral: bool
                               ) -> None:
         for event in events:
             RECEIVED_EVENTS.labels(type=event.get("type", "")).inc()
@@ -149,8 +149,8 @@ class AppServiceProxy(AppServiceServerMixin):
             #     TODO find all appservices that care about the sender's presence.
             #     pass
 
-    async def _collect_otk_count(self, otk_count: Optional[Dict[UserID, DeviceOTKCount]],
-                                 output: Dict[UUID, Events]) -> None:
+    async def _collect_otk_count(self, otk_count: Optional[dict[UserID, DeviceOTKCount]],
+                                 output: dict[UUID, Events]) -> None:
         if not otk_count:
             return
         for user_id, otk_count in otk_count.items():
@@ -159,9 +159,9 @@ class AppServiceProxy(AppServiceServerMixin):
                 # TODO metrics/logs for received OTK counts?
                 output[az.id].otk_count[user_id] = otk_count
 
-    async def _send_transactions(self, events: Dict[UUID, Events], synchronous_to: List[str]
-                                 ) -> Dict[str, bool]:
-        wait_for: Dict[UUID, Awaitable[bool]] = {}
+    async def _send_transactions(self, events: dict[UUID, Events], synchronous_to: list[str]
+                                 ) -> dict[str, bool]:
+        wait_for: dict[UUID, Awaitable[bool]] = {}
 
         for appservice_id, events in events.items():
             appservice = await AppService.get(appservice_id)
@@ -171,19 +171,19 @@ class AppServiceProxy(AppServiceServerMixin):
             if str(appservice.id) in synchronous_to:
                 wait_for[appservice.id] = task
 
-        output: Dict[str, bool] = {}
+        output: dict[str, bool] = {}
         if wait_for:
             for appservice_id, task in wait_for.items():
                 output[str(appservice_id)] = await task
         return output
 
-    async def handle_transaction(self, txn_id: str, *, events: List[JSON], extra_data: JSON,
-                                 ephemeral: Optional[List[JSON]] = None,
-                                 device_otk_count: Optional[Dict[UserID, DeviceOTKCount]] = None,
-                                 device_lists: Optional[DeviceLists] = None) -> Dict[str, bool]:
+    async def handle_transaction(self, txn_id: str, *, events: list[JSON], extra_data: JSON,
+                                 ephemeral: Optional[list[JSON]] = None,
+                                 device_otk_count: Optional[dict[UserID, DeviceOTKCount]] = None,
+                                 device_lists: Optional[DeviceLists] = None) -> dict[str, bool]:
         self.log.debug(f"Received transaction {txn_id} with {len(events)} PDUs "
                        f"and {len(ephemeral or [])} EDUs")
-        data: Dict[UUID, Events] = defaultdict(lambda: Events(txn_id))
+        data: dict[UUID, Events] = defaultdict(lambda: Events(txn_id))
 
         await self._collect_events(events, output=data, ephemeral=False)
         await self._collect_events(ephemeral or [], output=data, ephemeral=True)

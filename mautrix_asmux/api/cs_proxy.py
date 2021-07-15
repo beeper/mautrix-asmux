@@ -54,8 +54,8 @@ class ClientProxy:
     as_token: str
     login_shared_secret: Optional[bytes]
 
-    dm_locks: Dict[UserID, asyncio.Lock]
-    user_ids: Dict[str, UserID]
+    dm_locks: dict[UserID, asyncio.Lock]
+    user_ids: dict[str, UserID]
 
     def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_address: URL,
                  as_token: str, login_shared_secret: Optional[str], http: aiohttp.ClientSession,
@@ -114,7 +114,7 @@ class ClientProxy:
             raise Error.failed_to_contact_homeserver
 
     @asynccontextmanager
-    async def _put(self, url: URL, auth: str, json: Dict[str, Any]) -> web.Response:
+    async def _put(self, url: URL, auth: str, json: dict[str, Any]) -> web.Response:
         try:
             async with self.http.put(url, headers={"Authorization": f"Bearer {auth}"}, json=json
                                      ) as resp:
@@ -138,8 +138,8 @@ class ClientProxy:
                 user_id = self.user_ids[token_hash] = (await resp.json())["user_id"]
             return user_id
 
-    def _remove_current_dms(self, dms: Dict[UserID, List[RoomID]], username: str, bridge: str
-                            ) -> Dict[UserID, List[RoomID]]:
+    def _remove_current_dms(self, dms: dict[UserID, list[RoomID]], username: str, bridge: str
+                            ) -> dict[UserID, list[RoomID]]:
         prefix = f"{self.mxid_prefix}{username}_{bridge}_"
         suffix = self.mxid_suffix
         bot = f"{prefix}bot{suffix}"
@@ -377,7 +377,7 @@ class ClientProxy:
             raise Error.invalid_auth_token
         return az
 
-    def _copy_data(self, req: web.Request, az: AppService) -> Tuple[CIMultiDict, MultiDict]:
+    def _copy_data(self, req: web.Request, az: AppService) -> tuple[CIMultiDict, MultiDict]:
         query = req.query.copy()
         try:
             del query["access_token"]

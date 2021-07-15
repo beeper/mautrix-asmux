@@ -21,7 +21,7 @@ WS_CLOSE_REPLACED = 4001
 
 class AppServiceWebsocketHandler:
     log: logging.Logger = logging.getLogger("mau.api.as_websocket")
-    websockets: Dict[UUID, WebsocketHandler]
+    websockets: dict[UUID, WebsocketHandler]
     status_endpoint: Optional[str]
     _stopping: bool
 
@@ -34,11 +34,11 @@ class AppServiceWebsocketHandler:
     async def stop(self) -> None:
         self._stopping = True
         self.log.debug("Disconnecting websockets")
-        await asyncio.gather(*[ws.close(code=WSCloseCode.SERVICE_RESTART,
+        await asyncio.gather(*(ws.close(code=WSCloseCode.SERVICE_RESTART,
                                         status="server_shutting_down")
-                               for ws in self.websockets.values()])
+                               for ws in self.websockets.values()))
 
-    async def send_bridge_status(self, az: AppService, state: Union[Dict[str, Any], BridgeState]
+    async def send_bridge_status(self, az: AppService, state: Union[dict[str, Any], BridgeState]
                                  ) -> None:
         if not self.status_endpoint:
             return

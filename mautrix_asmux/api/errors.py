@@ -11,7 +11,7 @@ class _ErrorMeta:
         pass
 
     @staticmethod
-    def _make_error(errcode: str, error: str) -> Dict[str, str]:
+    def _make_error(errcode: str, error: str) -> dict[str, str]:
         return {
             "text": json.dumps({
                 "error": error,
