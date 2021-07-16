@@ -137,6 +137,11 @@ class _ErrorMeta:
         return web.HTTPInternalServerError(**self._make_error("M_UNKNOWN",
                                                               "Failed to register bridge bot"))
 
+    @property
+    def websocket_not_connected(self) -> web.HTTPException:
+        raise web.HTTPBadGateway(**self._make_error("FI.MAU.WS_NOT_CONNECTED",
+                                                    "Endpoint is not connected to websocket"))
+
 
 class Error(metaclass=_ErrorMeta):
     pass

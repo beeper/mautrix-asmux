@@ -77,6 +77,9 @@ class Config(BaseFileConfig, BaseValidatableConfig):
 
         copy_dict("mux.bridge_config_template_files")
         copy("mux.status_endpoint")
+        copy("mux.sync_proxy.url")
+        copy("mux.sync_proxy.token")
+        copy("mux.sync_proxy.asmux_address")
 
         copy("logging")
 

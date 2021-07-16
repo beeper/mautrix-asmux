@@ -59,6 +59,14 @@ mux:
     # Endpoint for reporting bridge status.
     # Currently used for reporting transaction websocket disconnections.
     status_endpoint: null
+    # Settings for mautrix-syncproxy to do encryption-related /syncing in the cloud.
+    sync_proxy:
+        # Address where mautrix-asmux can reach the sync proxy.
+        url: null
+        # Shared secret for sync proxy API.
+        token: null
+        # Address where the sync proxy can reach mautrix-asmux.
+        asmux_address: null
 
 # Python logging configuration.
 #

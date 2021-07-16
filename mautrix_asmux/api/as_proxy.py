@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, List, Dict, Any, Awaitable, TYPE_CHECKING
+from typing import Optional, Any, Awaitable, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
@@ -13,6 +13,7 @@ from attr import dataclass
 from mautrix.types import JSON, DeviceOTKCount, DeviceLists, UserID
 from mautrix.appservice import AppServiceServerMixin
 from mautrix.util.opt_prometheus import Counter
+from mautrix.util.logging import TraceLogger
 
 from ..database import Room, AppService
 from ..segment import track_events
@@ -37,9 +38,10 @@ class Events:
         if self.edu:
             output["ephemeral"] = self.edu
         if self.otk_count:
-            output["one_time_keys_count"] = self.otk_count
+            output["one_time_keys_count"] = {user_id: otk.serialize()
+                                             for user_id, otk in self.otk_count.items()}
         if self.device_lists.changed or self.device_lists.left:
-            output["device_lists"] = self.device_lists
+            output["device_lists"] = self.device_lists.serialize()
         return output
 
 
@@ -59,7 +61,7 @@ FAILED_EVENTS = Counter("asmux_failed_events",
 
 
 class AppServiceProxy(AppServiceServerMixin):
-    log: logging.Logger = logging.getLogger("mau.api.as_proxy")
+    log: TraceLogger = logging.getLogger("mau.api.as_proxy")
     http: aiohttp.ClientSession
 
     hs_token: str
@@ -77,30 +79,31 @@ class AppServiceProxy(AppServiceServerMixin):
         self.http = http
         self.locks = defaultdict(lambda: asyncio.Lock())
 
-    async def post_events(self, appservice: AppService, events: Events) -> bool:
+    async def post_events(self, appservice: AppService, events: Events) -> str:
         async with self.locks[appservice.id]:
             for type in events.types:
                 ACCEPTED_EVENTS.labels(owner=appservice.owner, bridge=appservice.prefix,
                                        type=type).inc()
-            ok = False
+            status = None
             try:
+                self.log.trace("Sending transaction to %s: %s", appservice.name, events)
                 if not appservice.push:
-                    ok = await self.server.as_websocket.post_events(appservice, events)
+                    status = await self.server.as_websocket.post_events(appservice, events)
                 elif appservice.address:
-                    ok = await self.server.as_http.post_events(appservice, events)
+                    status = await self.server.as_http.post_events(appservice, events)
                 else:
                     self.log.warning(f"Not sending transaction {events.txn_id} "
                                      f"to {appservice.name}: no address configured")
             except Exception:
                 self.log.exception(f"Fatal error sending transaction {events.txn_id} "
                                    f"to {appservice.name}")
-            if ok:
+            if status == "ok":
                 self.log.debug(f"Successfully sent {events.txn_id} to {appservice.name}")
                 asyncio.create_task(track_events(appservice, events))
-            metric = SUCCESSFUL_EVENTS if ok else FAILED_EVENTS
+            metric = SUCCESSFUL_EVENTS if status == "ok" else FAILED_EVENTS
             for type in events.types:
                 metric.labels(owner=appservice.owner, bridge=appservice.prefix, type=type).inc()
-            return ok
+            return status
 
     async def _get_az_from_user_id(self, user_id: UserID) -> Optional[AppService]:
         if ((not user_id or not user_id.startswith(self.mxid_prefix)
@@ -131,9 +134,10 @@ class AppServiceProxy(AppServiceServerMixin):
 
     async def _collect_events(self, events: list[JSON], output: dict[UUID, Events], ephemeral: bool
                               ) -> None:
-        for event in events:
+        for event in (events or []):
             RECEIVED_EVENTS.labels(type=event.get("type", "")).inc()
             room_id = event.get("room_id")
+            to_user_id = event.get("to_user_id")
             if room_id:
                 room = await Room.get(room_id)
                 if not room and not ephemeral:
@@ -144,6 +148,13 @@ class AppServiceProxy(AppServiceServerMixin):
                     output[room.owner].types.append(event.get("type", ""))
                 else:
                     self.log.debug(f"No target found for event in {room_id}")
+                    DROPPED_EVENTS.labels(type=event.get("type", "")).inc()
+            elif to_user_id:
+                az = await self._get_az_from_user_id(to_user_id)
+                if az:
+                    output[az.id].edu.append(event)
+                else:
+                    self.log.debug(f"No target found for to-device event to {to_user_id}")
                     DROPPED_EVENTS.labels(type=event.get("type", "")).inc()
             # elif event.get("type") == "m.presence":
             #     TODO find all appservices that care about the sender's presence.
@@ -160,8 +171,8 @@ class AppServiceProxy(AppServiceServerMixin):
                 output[az.id].otk_count[user_id] = otk_count
 
     async def _send_transactions(self, events: dict[UUID, Events], synchronous_to: list[str]
-                                 ) -> Any:
-        wait_for: dict[UUID, Awaitable[bool]] = {}
+                                 ) -> dict[str, Any]:
+        wait_for: dict[UUID, Awaitable[str]] = {}
 
         for appservice_id, events in events.items():
             appservice = await AppService.get(appservice_id)
@@ -174,12 +185,12 @@ class AppServiceProxy(AppServiceServerMixin):
         if not synchronous_to:
             return {"com.beeper.asmux.synchronous": False}
 
-        output: dict[str, bool] = {}
+        sent_to: dict[str, str] = {}
         if wait_for:
             for appservice_id, task in wait_for.items():
-                output[str(appservice_id)] = await task
+                sent_to[str(appservice_id)] = await task
         return {
-            "com.beeper.asmux.sent_to": output,
+            "com.beeper.asmux.sent_to": sent_to,
             "com.beeper.asmux.synchronous": True,
         }
 
@@ -187,12 +198,13 @@ class AppServiceProxy(AppServiceServerMixin):
                                  ephemeral: Optional[list[JSON]] = None,
                                  device_otk_count: Optional[dict[UserID, DeviceOTKCount]] = None,
                                  device_lists: Optional[DeviceLists] = None) -> Any:
-        self.log.debug(f"Received transaction {txn_id} with {len(events)} PDUs "
+        self.log.debug(f"Received transaction {txn_id} with {len(events or [])} PDUs "
                        f"and {len(ephemeral or [])} EDUs")
-        data: dict[UUID, Events] = defaultdict(lambda: Events(txn_id))
+        outgoing_txn_id = extra_data.get("fi.mau.syncproxy.transaction_id", txn_id)
+        data: dict[UUID, Events] = defaultdict(lambda: Events(outgoing_txn_id))
 
         await self._collect_events(events, output=data, ephemeral=False)
-        await self._collect_events(ephemeral or [], output=data, ephemeral=True)
+        await self._collect_events(ephemeral, output=data, ephemeral=True)
         await self._collect_otk_count(device_otk_count, output=data)
         # TODO on device list changes, send notification to all bridges
         # await self._collect_device_lists(device_lists, output=data)

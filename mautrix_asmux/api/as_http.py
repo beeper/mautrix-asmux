@@ -23,7 +23,7 @@ class AppServiceHTTPHandler:
         self.mxid_suffix = mxid_suffix
         self.http = http
 
-    async def post_events(self, appservice: AppService, events: Events) -> bool:
+    async def post_events(self, appservice: AppService, events: Events) -> str:
         attempt = 0
         url = URL(appservice.address) / "_matrix/app/v1/transactions" / events.txn_id
         err_prefix = (f"Failed to send transaction {events.txn_id} "
@@ -50,13 +50,13 @@ class AppServiceHTTPHandler:
                     last_error = f"HTTP {resp.status}: {await resp.text()!r}"
                     self.log.debug(f"{err_prefix}: {last_error}")
                 else:
-                    return True
+                    return "ok"
             await asyncio.sleep(backoff)
             backoff *= 1.5
         last_error = f" (last error: {last_error})" if last_error else ""
         self.log.warning(f"Gave up trying to send {events.txn_id} to {appservice.name}"
                          + last_error)
-        return False
+        return "http-gave-up"
 
     async def ping(self, appservice: AppService, remote_id: str) -> BridgeState:
         url = (URL(appservice.address) / "_matrix/app/com.beeper.bridge_state").with_query({

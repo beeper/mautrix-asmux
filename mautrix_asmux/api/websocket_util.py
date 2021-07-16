@@ -100,11 +100,13 @@ class WebsocketHandler:
         except Exception:
             self.log.exception("Error sending close to client")
 
-    async def send(self, **kwargs: Any) -> None:
+    async def send(self, raise_errors: bool = False, **kwargs: Any) -> None:
         try:
             await self._ws.send_json(kwargs)
         except Exception:
             self.log.exception("Error sending data to client")
+            if raise_errors:
+                raise
 
     async def request(self, command: str, **kwargs: Any) -> Optional[Data]:
         self._prev_req_id += 1
