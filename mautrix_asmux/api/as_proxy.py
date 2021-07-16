@@ -160,7 +160,7 @@ class AppServiceProxy(AppServiceServerMixin):
                 output[az.id].otk_count[user_id] = otk_count
 
     async def _send_transactions(self, events: dict[UUID, Events], synchronous_to: list[str]
-                                 ) -> dict[str, bool]:
+                                 ) -> Any:
         wait_for: dict[UUID, Awaitable[bool]] = {}
 
         for appservice_id, events in events.items():
@@ -171,16 +171,22 @@ class AppServiceProxy(AppServiceServerMixin):
             if str(appservice.id) in synchronous_to:
                 wait_for[appservice.id] = task
 
+        if not synchronous_to:
+            return {"com.beeper.asmux.synchronous": False}
+
         output: dict[str, bool] = {}
         if wait_for:
             for appservice_id, task in wait_for.items():
                 output[str(appservice_id)] = await task
-        return output
+        return {
+            "com.beeper.asmux.sent_to": output,
+            "com.beeper.asmux.synchronous": True,
+        }
 
     async def handle_transaction(self, txn_id: str, *, events: list[JSON], extra_data: JSON,
                                  ephemeral: Optional[list[JSON]] = None,
                                  device_otk_count: Optional[dict[UserID, DeviceOTKCount]] = None,
-                                 device_lists: Optional[DeviceLists] = None) -> dict[str, bool]:
+                                 device_lists: Optional[DeviceLists] = None) -> Any:
         self.log.debug(f"Received transaction {txn_id} with {len(events)} PDUs "
                        f"and {len(ephemeral or [])} EDUs")
         data: dict[UUID, Events] = defaultdict(lambda: Events(txn_id))
