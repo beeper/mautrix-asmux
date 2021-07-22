@@ -198,9 +198,12 @@ class AppServiceProxy(AppServiceServerMixin):
                                  ephemeral: Optional[list[JSON]] = None,
                                  device_otk_count: Optional[dict[UserID, DeviceOTKCount]] = None,
                                  device_lists: Optional[DeviceLists] = None) -> Any:
-        self.log.debug(f"Received transaction {txn_id} with {len(events or [])} PDUs "
-                       f"and {len(ephemeral or [])} EDUs")
         outgoing_txn_id = extra_data.get("fi.mau.syncproxy.transaction_id", txn_id)
+        log_txn_id = (txn_id if outgoing_txn_id == txn_id
+                      else f"{outgoing_txn_id} (wrapped in {txn_id})")
+        self.log.debug(f"Received transaction {log_txn_id} with {len(events or [])} PDUs "
+                       f"and {len(ephemeral or [])} EDUs")
+        synchronous_to = extra_data.get("com.beeper.asmux.synchronous_to", [])
         data: dict[UUID, Events] = defaultdict(lambda: Events(outgoing_txn_id))
 
         await self._collect_events(events, output=data, ephemeral=False)
@@ -208,6 +211,8 @@ class AppServiceProxy(AppServiceServerMixin):
         await self._collect_otk_count(device_otk_count, output=data)
         # TODO on device list changes, send notification to all bridges
         # await self._collect_device_lists(device_lists, output=data)
+        # Special case to handle device lists from the sync proxy
+        if len(synchronous_to) == 1:
+            data[UUID(synchronous_to)].device_lists = device_lists
 
-        synchronous_to = extra_data.get("com.beeper.asmux.synchronous_to", [])
         return await self._send_transactions(data, synchronous_to)
