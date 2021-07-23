@@ -317,7 +317,7 @@ class ManagementAPI:
 
     async def ping_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)
-        remote_id = req.query.get("remote_id")
+        remote_id = req.query.get("remote_id", "unknown")
 
         try:
             if not az.push:
