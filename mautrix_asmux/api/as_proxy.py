@@ -213,6 +213,6 @@ class AppServiceProxy(AppServiceServerMixin):
         # await self._collect_device_lists(device_lists, output=data)
         # Special case to handle device lists from the sync proxy
         if len(synchronous_to) == 1:
-            data[UUID(synchronous_to)].device_lists = device_lists
+            data[UUID(synchronous_to[0])].device_lists = device_lists
 
         return await self._send_transactions(data, synchronous_to)
