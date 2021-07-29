@@ -38,8 +38,8 @@ class Events:
         if self.edu:
             output["ephemeral"] = self.edu
         if self.otk_count:
-            output["one_time_keys_count"] = {user_id: otk.serialize()
-                                             for user_id, otk in self.otk_count.items()}
+            output["device_one_time_keys_count"] = {user_id: otk.serialize()
+                                                    for user_id, otk in self.otk_count.items()}
         if self.device_lists.changed or self.device_lists.left:
             output["device_lists"] = self.device_lists.serialize()
         return output
