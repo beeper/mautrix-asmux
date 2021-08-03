@@ -1,10 +1,11 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-import json
 from typing import Any, Dict, Union, Optional
 from uuid import UUID
 import logging
 import asyncio
+import json
+import time
 
 import aiohttp
 from yarl import URL
@@ -100,6 +101,10 @@ class AppServiceWebsocketHandler:
                                                              ) as resp:
             return await self._get_response(resp)
 
+    @staticmethod
+    async def ping_server(_1: WebsocketHandler, _2: Dict[str, Any]) -> Dict[str, Any]:
+        return {"timestamp": int(time.time() * 1000)}
+
     async def stop_sync_proxy(self, az: AppService) -> None:
         url = self.sync_proxy.with_path("/_matrix/client/unstable/fi.mau.syncproxy") / str(az.id)
         headers = {"Authorization": f"Bearer {self.sync_proxy_token}"}
@@ -124,6 +129,7 @@ class AppServiceWebsocketHandler:
                               log=self.log.getChild(az.name))
         ws.set_handler("bridge_status", lambda handler, data: self.send_bridge_status(az, data))
         ws.set_handler("start_sync", lambda handler, data: self.start_sync_proxy(az, data))
+        ws.set_handler("ping", self.ping_server)
         await ws.prepare(req)
         log = self.log.getChild(az.name)
         if az.id in self.websockets:
