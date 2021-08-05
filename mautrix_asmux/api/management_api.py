@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Callable, Awaitable, Optional, Dict, TYPE_CHECKING
+from typing import Callable, Awaitable, Optional, TYPE_CHECKING
 from uuid import UUID
 import logging
 import base64
@@ -15,7 +15,7 @@ from yarl import URL
 
 from mautrix.types import JSON
 from mautrix.client import ClientAPI
-from mautrix.util.bridge_state import BridgeState
+from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
 from mautrix.util.config import yaml, RecursiveDict
 
 from ..database import AppService, User
@@ -34,8 +34,7 @@ DEFAULT_CFG_LIFETIME = 5 * 60
 MIN_CFG_LIFETIME = 30
 MAX_CFG_LIFETIME = 60 * 60
 
-
-BridgeState.default_error_source = "asmux"
+BridgeState.default_source = "asmux"
 BridgeState.human_readable_errors.update({
     "ping-no-remote": "Couldn't make ping: no address configured",
     "websocket-not-connected": "The bridge is not connected to the server",
@@ -326,10 +325,12 @@ class ManagementAPI:
                 pong = await self.server.as_http.ping(az, remote_id)
             else:
                 self.log.warning(f"Not pinging {az.name}: no address configured")
-                pong = BridgeState(ok=False, error="ping-no-remote").fill()
+                pong = BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                                   error="ping-no-remote").fill()
         except Exception as e:
             self.log.exception(f"Fatal error pinging {az.name}")
-            pong = BridgeState(ok=False, error="ping-fatal-error", message=str(e)).fill()
+            pong = BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                               error="ping-fatal-error", message=str(e)).fill()
         return web.json_response(pong.serialize())
 
     async def delete_appservice(self, req: web.Request) -> web.Response:
@@ -436,7 +437,8 @@ class ManagementAPI:
         config["appservice.as_token"] = az.real_as_token
         config["appservice.hs_token"] = az.hs_token
         config["bridge.user"] = f"@{az.owner}:{self.server_name}"
-        config["bridge.username_template"] = (f"{self.namespace_prefix}{az.owner}_{az.prefix}_" "{{.}}")
+        config["bridge.username_template"] = (f"{self.namespace_prefix}{az.owner}_{az.prefix}_"
+                                              "{{.}}")
         config["bridge.login_shared_secret"] = az.login_token
         with io.StringIO() as output:
             yaml.dump(config._data, output)

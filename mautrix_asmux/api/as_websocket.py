@@ -12,7 +12,7 @@ from yarl import URL
 from aiohttp import web
 from aiohttp.http import WSCloseCode
 
-from mautrix.util.bridge_state import BridgeState
+from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
 from mautrix.util.logging import TraceLogger
 from mautrix.errors import make_request_error
 
@@ -64,6 +64,9 @@ class AppServiceWebsocketHandler:
         if not self.status_endpoint:
             return
         if not isinstance(state, BridgeState):
+            if "ok" in state and "state_event" not in state:
+                state["state_event"] = (BridgeStateEvent.CONNECTED if state["ok"]
+                                        else BridgeStateEvent.UNKNOWN_ERROR)
             state = BridgeState.deserialize(state)
         self.log.debug(f"Sending bridge status for {az.name} to API server: {state}")
         await state.send(url=self.status_endpoint.format(owner=az.owner, prefix=az.prefix),
@@ -144,9 +147,9 @@ class AppServiceWebsocketHandler:
                 del self.websockets[az.id]
                 asyncio.create_task(self.stop_sync_proxy(az))
                 if not self._stopping:
-                    # TODO figure out remote IDs properly
                     await self.send_bridge_status(az, BridgeState(
-                        ok=False, error="websocket-not-connected",  # remote_id="*"
+                        state_event=BridgeStateEvent.TRANSIENT_DISCONNECT,
+                        error="websocket-not-connected",
                     ).fill())
         return ws.response
 
@@ -170,11 +173,17 @@ class AppServiceWebsocketHandler:
         try:
             ws = self.websockets[appservice.id]
         except KeyError:
-            return BridgeState(ok=False, error="websocket-not-connected").fill()
+            return BridgeState(state_event=BridgeStateEvent.TRANSIENT_DISCONNECT,
+                               error="websocket-not-connected").fill()
         try:
             raw_pong = await asyncio.wait_for(ws.request("ping", remote_id=remote_id), timeout=45)
         except asyncio.TimeoutError:
-            return BridgeState(ok=False, error="io-timeout").fill()
+            return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                               error="io-timeout").fill()
         except Exception as e:
-            return BridgeState(ok=False, error="websocket-fatal-error", message=str(e)).fill()
+            return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                               error="websocket-fatal-error", message=str(e)).fill()
+        if "ok" in raw_pong and "state_event" not in raw_pong:
+            raw_pong["state_event"] = (BridgeStateEvent.CONNECTED if raw_pong["ok"]
+                                       else BridgeStateEvent.UNKNOWN_ERROR)
         return BridgeState.deserialize(raw_pong)

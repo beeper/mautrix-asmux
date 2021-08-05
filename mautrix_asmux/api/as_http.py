@@ -8,7 +8,7 @@ from yarl import URL
 from aiohttp import ClientError, ClientTimeout, ContentTypeError
 import aiohttp
 
-from mautrix.util.bridge_state import BridgeState
+from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
 
 from ..database import AppService
 from .as_proxy import Events
@@ -67,18 +67,25 @@ class AppServiceHTTPHandler:
         try:
             resp = await self.http.post(url, headers=headers, timeout=ClientTimeout(total=45))
         except asyncio.TimeoutError:
-            return BridgeState(ok=False, error="io-timeout").fill()
+            return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                               error="io-timeout").fill()
         except ClientError as e:
-            return BridgeState(ok=False, error="http-connection-error", message=str(e)).fill()
+            return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                               error="http-connection-error", message=str(e)).fill()
         except Exception as e:
             self.log.exception(f"Error pinging {appservice.name}")
-            return BridgeState(ok=False, error="http-fatal-error", message=str(e)).fill()
+            return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                               error="http-fatal-error", message=str(e)).fill()
         try:
             raw_pong = await resp.json()
         except (json.JSONDecodeError, ContentTypeError):
             if resp.status >= 300:
-                return BridgeState(ok=False, error=f"ping-http-{resp.status}",
-                                   message=f"Ping returned non-JSON body and HTTP {resp.status}"
-                                   ).fill()
-            return BridgeState(ok=False, error="http-not-json").fill()
+                return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                                   message=f"Ping returned non-JSON body and HTTP {resp.status}",
+                                   error=f"ping-http-{resp.status}").fill()
+            return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
+                               error="http-not-json").fill()
+        if "ok" in raw_pong and "state_event" not in raw_pong:
+            raw_pong["state_event"] = (BridgeStateEvent.CONNECTED if raw_pong["ok"]
+                                       else BridgeStateEvent.UNKNOWN_ERROR)
         return BridgeState.deserialize(raw_pong)
