@@ -51,8 +51,10 @@ class AppServiceHTTPHandler:
                     self.log.debug(f"{err_prefix}: {last_error}")
                 else:
                     return "ok"
-            await asyncio.sleep(backoff)
-            backoff *= 1.5
+            # Don't sleep after last attempt
+            if attempt < retries:
+                await asyncio.sleep(backoff)
+                backoff *= 1.5
         last_error = f" (last error: {last_error})" if last_error else ""
         self.log.warning(f"Gave up trying to send {events.txn_id} to {appservice.name}"
                          + last_error)
