@@ -350,7 +350,7 @@ class ManagementAPI:
         room = await Room.get(room_id)
         if not room:
             raise Error.room_not_found
-        await room.delete()
+        await room.mark_deleted()
         return web.Response(status=204)
 
     async def _register_as_bot(self, az: AppService) -> None:

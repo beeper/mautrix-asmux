@@ -14,6 +14,7 @@ from .base import Base
 class Room(Base):
     id: RoomID
     owner: UUID
+    deleted: bool
 
     cache_by_id: ClassVar[Dict[RoomID, 'Room']] = {}
 
@@ -30,13 +31,18 @@ class Room(Base):
             return cls.cache_by_id[id]
         except KeyError:
             pass
-        row = await cls.db.fetchrow("SELECT id, owner FROM room WHERE id=$1", room_id)
+        row = await cls.db.fetchrow("SELECT id, owner, deleted FROM room WHERE id=$1", room_id)
         return Room(**row)._add_to_cache() if row else None
 
     async def insert(self) -> None:
-        await self.db.execute("INSERT INTO room (id, owner) VALUES ($1, $2)", self.id, self.owner)
+        await self.db.execute("INSERT INTO room (id, owner, deleted) VALUES ($1, $2, $3)",
+                              self.id, self.owner, self.deleted)
         self._add_to_cache()
 
     async def delete(self) -> None:
         await self.db.execute("DELETE FROM room WHERE id=$1 AND owner=$2", self.id, self.owner)
         self._delete_from_cache()
+
+    async def mark_deleted(self) -> None:
+        self.deleted = True
+        await self.db.execute("UPDATE room SET deleted=$2 WHERE id=$1", self.id, self.deleted)

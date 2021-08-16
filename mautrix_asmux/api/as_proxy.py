@@ -127,7 +127,7 @@ class AppServiceProxy(AppServiceServerMixin):
         az = await self._get_az_from_user_id(user_id)
         if not az:
             return None
-        room = Room(id=event["room_id"], owner=az.id)
+        room = Room(id=event["room_id"], owner=az.id, deleted=False)
         self.log.debug(f"Registering {az.name} ({az.id}) as the owner of {room.id}")
         await room.insert()
         return room
@@ -142,7 +142,7 @@ class AppServiceProxy(AppServiceServerMixin):
                 room = await Room.get(room_id)
                 if not room and not ephemeral:
                     room = await self.register_room(event)
-                if room:
+                if room and not room.deleted:
                     output_array = output[room.owner].edu if ephemeral else output[room.owner].pdu
                     output_array.append(event)
                     output[room.owner].types.append(event.get("type", ""))
