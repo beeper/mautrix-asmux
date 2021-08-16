@@ -56,6 +56,15 @@ class _ErrorMeta:
             "M_UNAUTHORIZED", "You are not authorized to access that appservice"))
 
     @property
+    def room_delete_access_denied(self) -> web.HTTPException:
+        return web.HTTPUnauthorized(**self._make_error(
+            "M_UNAUTHORIZED", "You are not authorized to delete rooms"))
+
+    @property
+    def room_not_found(self) -> web.HTTPException:
+        return web.HTTPNotFound(**self._make_error("M_NOT_FOUND", "Unknown room ID"))
+
+    @property
     def appservice_ws_not_enabled(self) -> web.HTTPException:
         return web.HTTPUnauthorized(**self._make_error(
             "COM.BEEPER.TXN_WS_NOT_ENABLED", "This appservice is not marked to use websocket for "

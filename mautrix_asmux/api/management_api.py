@@ -13,12 +13,12 @@ from ruamel.yaml.comments import CommentedMap
 from aiohttp import web, ClientSession
 from yarl import URL
 
-from mautrix.types import JSON
+from mautrix.types import JSON, RoomID
 from mautrix.client import ClientAPI
 from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
 from mautrix.util.config import yaml, RecursiveDict
 
-from ..database import AppService, User
+from ..database import AppService, User, Room
 from ..config import Config
 from .errors import Error
 
@@ -109,6 +109,7 @@ class ManagementAPI:
         self.app.router.add_get("/appservice/{owner}/{prefix}", self.get_appservice)
         self.app.router.add_delete("/appservice/{id}", self.delete_appservice)
         self.app.router.add_delete("/appservice/{owner}/{prefix}", self.delete_appservice)
+        self.app.router.add_delete("/room/{room_id}", self.delete_room)
 
         self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
         self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
@@ -136,7 +137,10 @@ class ManagementAPI:
             auth = auth[len("Bearer "):]
         except KeyError:
             raise Error.missing_auth_header
-        if auth != self.shared_secret:
+        if auth == self.shared_secret:
+            req["is_root"] = True
+        else:
+            req["is_root"] = False
             await callback(req, auth)
         resp = await handler(req)
         resp.headers.update(self._cors)
@@ -336,6 +340,17 @@ class ManagementAPI:
     async def delete_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)
         await az.delete()
+        return web.Response(status=204)
+
+    @staticmethod
+    async def delete_room(req: web.Request) -> web.Response:
+        if not req["is_root"]:
+            raise Error.room_delete_access_denied
+        room_id = RoomID(req.match_info["room_id"])
+        room = await Room.get(room_id)
+        if not room:
+            raise Error.room_not_found
+        await room.delete()
         return web.Response(status=204)
 
     async def _register_as_bot(self, az: AppService) -> None:
