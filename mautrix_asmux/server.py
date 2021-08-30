@@ -51,6 +51,9 @@ class MuxServer:
 
         self.app = web.Application()
         self.as_proxy.register_routes(self.app)
+        self.app.router.add_route(
+            "PUT", "/_matrix/app/unstable/fi.mau.syncproxy/error/{transaction_id}",
+            self.as_proxy.handle_syncproxy_error)
         self.app.add_subapp("/_matrix/asmux/mxauth", self.management_api.mxauth_app)
         self.app.add_subapp("/_matrix/asmux/public", self.management_api.public_app)
         self.app.add_subapp("/_matrix/asmux/websocket", self.management_api.websocket_app)

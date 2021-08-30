@@ -5,10 +5,12 @@ from collections import defaultdict
 from uuid import UUID
 import logging
 import asyncio
+import json
 
+from attr import dataclass
+from aiohttp import web
 import aiohttp
 import attr
-from attr import dataclass
 
 from mautrix.types import JSON, DeviceOTKCount, DeviceLists, UserID
 from mautrix.appservice import AppServiceServerMixin
@@ -17,6 +19,7 @@ from mautrix.util.logging import TraceLogger
 
 from ..database import Room, AppService
 from ..segment import track_events
+from .errors import Error
 
 if TYPE_CHECKING:
     from ..server import MuxServer
@@ -216,3 +219,43 @@ class AppServiceProxy(AppServiceServerMixin):
             data[UUID(synchronous_to[0])].device_lists = device_lists
 
         return await self._send_transactions(data, synchronous_to)
+
+    async def handle_syncproxy_error(self, request: web.Request) -> web.Response:
+        txn_id, data = await self._read_transaction_header(request)
+        try:
+            appservice_id = UUID(request.query["appservice_id"])
+        except KeyError:
+            raise Error.missing_appservice_id_query
+        except ValueError:
+            raise Error.invalid_appservice_id_query
+        appservice = await AppService.get(appservice_id)
+        if appservice is None:
+            raise Error.appservice_not_found
+        outgoing_txn_id = data.pop("fi.mau.syncproxy.transaction_id", txn_id)
+
+        sent_to = {}
+        async with self.locks[appservice.id]:
+            try:
+                self.log.trace("Sending error transaction %s to %s: %s", outgoing_txn_id,
+                               appservice.name, data)
+                if not appservice.push:
+                    status = await self.server.as_websocket.post_syncproxy_error(
+                        appservice, outgoing_txn_id, data)
+                elif appservice.address:
+                    status = await self.server.as_http.post_syncproxy_error(
+                        appservice, outgoing_txn_id, data)
+                else:
+                    self.log.warning(f"Not sending syncproxy error transaction {outgoing_txn_id} "
+                                     f"to {appservice.name}: no address configured")
+                    raise Error.syncproxy_error_not_supported
+                sent_to[str(appservice_id)] = status
+            except web.HTTPException:
+                raise
+            except Exception:
+                self.log.exception("Fatal error sending syncproxy error transaction "
+                                   f"{outgoing_txn_id} to {appservice.name}")
+        self.transactions.add(txn_id)
+        return web.json_response({
+            "com.beeper.asmux.sent_to": sent_to,
+            "com.beeper.asmux.synchronous": True,
+        })

@@ -1,5 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
+from typing import Any
 import logging
 import asyncio
 import json
@@ -12,6 +13,7 @@ from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
 
 from ..database import AppService
 from .as_proxy import Events
+from .errors import Error
 
 
 class AppServiceHTTPHandler:
@@ -59,6 +61,10 @@ class AppServiceHTTPHandler:
         self.log.warning(f"Gave up trying to send {events.txn_id} to {appservice.name}"
                          + last_error)
         return "http-gave-up"
+
+    async def post_syncproxy_error(self, appservice: AppService, txn_id: str, data: dict[str, Any]
+                                   ) -> str:
+        raise Error.syncproxy_error_not_supported
 
     async def ping(self, appservice: AppService, remote_id: str) -> BridgeState:
         url = (URL(appservice.address) / "_matrix/app/com.beeper.bridge_state").with_query({

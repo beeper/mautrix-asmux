@@ -26,6 +26,16 @@ class _ErrorMeta:
                                                      "Request body is not valid JSON"))
 
     @property
+    def missing_appservice_id_query(self) -> web.HTTPException:
+        return web.HTTPBadRequest(**self._make_error("M_MISSING_PARAM",
+                                                     "Missing appservice_id query param"))
+
+    @property
+    def invalid_appservice_id_query(self) -> web.HTTPException:
+        return web.HTTPBadRequest(**self._make_error("M_INVALID_PARAM",
+                                                     "Malformed appservice_id query param"))
+
+    @property
     def missing_auth_header(self) -> web.HTTPException:
         return web.HTTPForbidden(**self._make_error("M_MISSING_TOKEN",
                                                     "Missing authorization header"))
@@ -150,6 +160,12 @@ class _ErrorMeta:
     def websocket_not_connected(self) -> web.HTTPException:
         raise web.HTTPBadGateway(**self._make_error("FI.MAU.WS_NOT_CONNECTED",
                                                     "Endpoint is not connected to websocket"))
+
+    @property
+    def syncproxy_error_not_supported(self) -> web.HTTPException:
+        raise web.HTTPNotImplemented(**self._make_error(
+            "FI.MAU.NOT_IMPLEMENTED",
+            "Sending syncproxy errors to non-websocket appservices is not implemented"))
 
 
 class Error(metaclass=_ErrorMeta):

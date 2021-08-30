@@ -14,7 +14,7 @@ from aiohttp.http import WSCloseCode
 
 from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
 from mautrix.util.logging import TraceLogger
-from mautrix.errors import make_request_error
+from mautrix.errors import make_request_error, standard_error, MatrixStandardRequestError
 
 from ..database import AppService
 from ..config import Config
@@ -24,6 +24,10 @@ from .as_proxy import Events
 from .websocket_util import WebsocketHandler
 
 WS_CLOSE_REPLACED = 4001
+
+@standard_error("FI.MAU.SYNCPROXY.NOT_ACTIVE")
+class SyncProxyNotActive(MatrixStandardRequestError):
+    pass
 
 
 class AppServiceWebsocketHandler:
@@ -116,6 +120,8 @@ class AppServiceWebsocketHandler:
             async with aiohttp.ClientSession() as sess, sess.delete(url, headers=headers) as resp:
                 await self._get_response(resp)
             self.log.debug(f"Stopped sync proxy for {az.id}")
+        except SyncProxyNotActive as e:
+            self.log.debug(f"Failed to request sync proxy stop for {az.id}: {e}")
         except Exception as e:
             self.log.warning(f"Failed to request sync proxy stop for {az.id}: "
                              f"{type(e).__name__}: {e}")
@@ -165,6 +171,22 @@ class AppServiceWebsocketHandler:
         try:
             await ws.send(raise_errors=True, command="transaction", status="ok",
                           txn_id=events.txn_id, **events.serialize())
+        except Exception:
+            return "websocket-send-fail"
+        return "ok"
+
+    async def post_syncproxy_error(self, appservice: AppService, txn_id: str, data: dict[str, Any]
+                                   ) -> str:
+        try:
+            ws = self.websockets[appservice.id]
+        except KeyError:
+            self.log.warning(f"Not sending syncproxy error {txn_id} to {appservice.name}: "
+                             f"websocket not connected")
+            return "websocket-not-connected"
+        self.log.debug(f"Sending transaction {txn_id} to {appservice.name} via websocket")
+        try:
+            await ws.send(raise_errors=True, command="syncproxy_error", status="ok",
+                          data={"txn_id": txn_id, **data})
         except Exception:
             return "websocket-send-fail"
         return "ok"
