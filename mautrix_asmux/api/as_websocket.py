@@ -14,6 +14,7 @@ from aiohttp.http import WSCloseCode
 
 from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
 from mautrix.util.logging import TraceLogger
+from mautrix.util.opt_prometheus import Gauge
 from mautrix.errors import make_request_error, standard_error, MatrixStandardRequestError
 
 from ..database import AppService
@@ -24,6 +25,10 @@ from .as_proxy import Events
 from .websocket_util import WebsocketHandler
 
 WS_CLOSE_REPLACED = 4001
+CONNECTED_WEBSOCKETS = Gauge("asmux_connected_websockets",
+                             "Bridges connected to the appservice transaction websocket",
+                             labelnames=["owner", "bridge"])
+
 
 @standard_error("FI.MAU.SYNCPROXY.NOT_ACTIVE")
 class SyncProxyNotActive(MatrixStandardRequestError):
@@ -146,9 +151,11 @@ class AppServiceWebsocketHandler:
             await self.websockets[az.id].close(code=WS_CLOSE_REPLACED, status="conn_replaced")
         try:
             self.websockets[az.id] = ws
+            CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).inc()
             await ws.send(command="connect", status="connected")
             await ws.handle()
         finally:
+            CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).dec()
             if self.websockets.get(az.id) == ws:
                 del self.websockets[az.id]
                 asyncio.create_task(self.stop_sync_proxy(az))
