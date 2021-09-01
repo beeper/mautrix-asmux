@@ -5,6 +5,7 @@ from collections import defaultdict
 from uuid import UUID
 import logging
 import asyncio
+import time
 import json
 
 from attr import dataclass
@@ -16,6 +17,7 @@ from mautrix.types import JSON, DeviceOTKCount, DeviceLists, UserID
 from mautrix.appservice import AppServiceServerMixin
 from mautrix.util.opt_prometheus import Counter
 from mautrix.util.logging import TraceLogger
+from mautrix.util.bridge_state import BridgeStateEvent, GlobalBridgeState, BridgeState
 
 from ..database import Room, AppService
 from ..segment import track_events
@@ -23,6 +25,42 @@ from .errors import Error
 
 if TYPE_CHECKING:
     from ..server import MuxServer
+
+BridgeState.default_source = "asmux"
+BridgeState.human_readable_errors.update({
+    "ping-no-remote": "Couldn't make ping: no address configured",
+    "websocket-not-connected": "The bridge is not connected to the server",
+    "io-timeout": "Timeout while waiting for ping response",
+    "http-connection-error": "HTTP client error while pinging: {message}",
+    "ping-fatal-error": "Fatal error while pinging: {message}",
+    "websocket-fatal-error": "Fatal error while pinging through websocket: {message}",
+    "http-fatal-error": "Fatal error while pinging through HTTP: {message}",
+    "http-not-json": "Non-JSON ping response",
+})
+
+
+def make_ping_error(error: str, message: Optional[str] = None,
+                    state_event: BridgeStateEvent = BridgeStateEvent.BRIDGE_UNREACHABLE
+                    ) -> GlobalBridgeState:
+    state_event = BridgeState(state_event=state_event, error=error, message=message)
+    return GlobalBridgeState(remote_states=None, bridge_state=state_event)
+
+
+def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> dict[str, Any]:
+    if "ok" in raw_pong and "state_event" not in raw_pong:
+        raw_pong["state_event"] = (BridgeStateEvent.CONNECTED if raw_pong["ok"]
+                                   else BridgeStateEvent.UNKNOWN_ERROR)
+    if is_global and "remoteState" not in raw_pong:
+        raw_pong = {
+            "remoteState": {
+                raw_pong.get("remote_id", "unknown"): raw_pong,
+            },
+            "bridgeState": {
+                "state_event": BridgeStateEvent.RUNNING,
+                "source": "asmux",
+            },
+        }
+    return raw_pong
 
 
 @dataclass
@@ -107,6 +145,29 @@ class AppServiceProxy(AppServiceServerMixin):
             for type in events.types:
                 metric.labels(owner=appservice.owner, bridge=appservice.prefix, type=type).inc()
             return status
+
+    async def ping(self, az: AppService) -> GlobalBridgeState:
+        try:
+            if not az.push:
+                pong = await self.server.as_websocket.ping(az)
+            elif az.address:
+                pong = await self.server.as_http.ping(az)
+            else:
+                self.log.warning(f"Not pinging {az.name}: no address configured")
+                pong = make_ping_error("ping-no-remote")
+        except Exception as e:
+            self.log.exception(f"Fatal error pinging {az.name}")
+            pong = make_ping_error("ping-fatal-error", message=str(e))
+        user_id = f"@{az.owner}{self.mxid_suffix}"
+        pong.bridge_state.fill()
+        pong.bridge_state.user_id = user_id
+        pong.bridge_state.remote_id = None
+        pong.bridge_state.remote_name = None
+        for remote in (pong.remote_states or {}).values():
+            remote.source = remote.source or "bridge"
+            remote.timestamp = remote.timestamp or int(time.time())
+            remote.user_id = user_id
+        return pong
 
     async def _get_az_from_user_id(self, user_id: UserID) -> Optional[AppService]:
         if ((not user_id or not user_id.startswith(self.mxid_prefix)
