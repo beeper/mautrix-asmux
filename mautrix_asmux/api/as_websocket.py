@@ -12,7 +12,7 @@ from yarl import URL
 from aiohttp import web
 from aiohttp.http import WSCloseCode
 
-from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
+from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
 from mautrix.util.logging import TraceLogger
 from mautrix.errors import make_request_error, standard_error, MatrixStandardRequestError
 
@@ -20,7 +20,7 @@ from ..database import AppService
 from ..config import Config
 from .cs_proxy import ClientProxy
 from .errors import Error
-from .as_proxy import Events
+from .as_proxy import Events, make_ping_error, migrate_state_data
 from .websocket_util import WebsocketHandler
 
 WS_CLOSE_REPLACED = 4001
@@ -68,10 +68,7 @@ class AppServiceWebsocketHandler:
         if not self.status_endpoint:
             return
         if not isinstance(state, BridgeState):
-            if "ok" in state and "state_event" not in state:
-                state["state_event"] = (BridgeStateEvent.CONNECTED if state["ok"]
-                                        else BridgeStateEvent.UNKNOWN_ERROR)
-            state = BridgeState.deserialize(state)
+            state = BridgeState.deserialize(migrate_state_data(state, is_global=False))
         self.log.debug(f"Sending bridge status for {az.name} to API server: {state}")
         await state.send(url=self.status_endpoint.format(owner=az.owner, prefix=az.prefix),
                          token=az.real_as_token, log=self.log, log_sent=False)
@@ -154,7 +151,7 @@ class AppServiceWebsocketHandler:
                 asyncio.create_task(self.stop_sync_proxy(az))
                 if not self._stopping:
                     await self.send_bridge_status(az, BridgeState(
-                        state_event=BridgeStateEvent.TRANSIENT_DISCONNECT,
+                        state_event=BridgeStateEvent.BRIDGE_UNREACHABLE,
                         error="websocket-not-connected",
                     ).fill())
         return ws.response
@@ -191,21 +188,17 @@ class AppServiceWebsocketHandler:
             return "websocket-send-fail"
         return "ok"
 
-    async def ping(self, appservice: AppService, remote_id: str) -> BridgeState:
+    async def ping(self, appservice: AppService) -> GlobalBridgeState:
         try:
             ws = self.websockets[appservice.id]
         except KeyError:
-            return BridgeState(state_event=BridgeStateEvent.TRANSIENT_DISCONNECT,
-                               error="websocket-not-connected").fill()
+            return make_ping_error("websocket-not-connected")
         try:
-            raw_pong = await asyncio.wait_for(ws.request("ping", remote_id=remote_id), timeout=45)
+            raw_pong = await asyncio.wait_for(ws.request("ping"), timeout=45)
         except asyncio.TimeoutError:
-            return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
-                               error="io-timeout").fill()
+            return make_ping_error("io-timeout")
         except Exception as e:
-            return BridgeState(state_event=BridgeStateEvent.UNKNOWN_ERROR,
-                               error="websocket-fatal-error", message=str(e)).fill()
-        if "ok" in raw_pong and "state_event" not in raw_pong:
-            raw_pong["state_event"] = (BridgeStateEvent.CONNECTED if raw_pong["ok"]
-                                       else BridgeStateEvent.UNKNOWN_ERROR)
-        return BridgeState.deserialize(raw_pong)
+            self.log.warning(f"Failed to ping {appservice.name} ({appservice.id}) via websocket",
+                             exc_info=True)
+            return make_ping_error("websocket-fatal-error", message=str(e))
+        return GlobalBridgeState.deserialize(migrate_state_data(raw_pong))
