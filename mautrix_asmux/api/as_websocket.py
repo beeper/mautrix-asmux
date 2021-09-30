@@ -135,17 +135,21 @@ class AppServiceWebsocketHandler:
         az = await ClientProxy.find_appservice(req, raise_errors=True)
         if az.push:
             raise Error.appservice_ws_not_enabled
+        identifier = req.headers.get("X-Mautrix-Process-ID", "unidentified")
         ws = WebsocketHandler(type_name="Websocket transaction connection",
                               proto="fi.mau.as_sync",
-                              log=self.log.getChild(az.name))
+                              log=self.log.getChild(az.name).getChild(identifier))
         ws.set_handler("bridge_status", lambda handler, data: self.send_bridge_status(az, data))
         ws.set_handler("start_sync", lambda handler, data: self.start_sync_proxy(az, data))
         ws.set_handler("ping", self.ping_server)
         await ws.prepare(req)
-        log = self.log.getChild(az.name)
-        if az.id in self.websockets:
-            log.debug(f"New websocket connection coming in, closing old one")
-            await self.websockets[az.id].close(code=WS_CLOSE_REPLACED, status="conn_replaced")
+        try:
+            old_websocket = self.websockets.pop(az.id)
+        except KeyError:
+            pass
+        else:
+            ws.log.debug(f"New websocket connection coming in, closing old one")
+            await old_websocket.close(code=WS_CLOSE_REPLACED, status="conn_replaced")
         try:
             self.websockets[az.id] = ws
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).inc()

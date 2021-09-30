@@ -15,6 +15,7 @@ CommandHandler = Callable[['WebsocketHandler', Data], Awaitable[Optional[Data]]]
 class WebsocketHandler:
     _ws: web.WebSocketResponse
     log: logging.Logger
+    type_name: str
     _request_waiters: dict[int, asyncio.Future]
     _command_handlers: dict[str, CommandHandler]
     _prev_req_id: int
