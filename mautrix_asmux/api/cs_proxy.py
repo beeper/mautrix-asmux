@@ -253,6 +253,9 @@ class ClientProxy:
                 return f"/rooms/.../{parts[6]}/..."
             else:
                 return f"/rooms/.../{parts[6]}"
+        elif (path.startswith("/_matrix/client/unstable/org.matrix.msc2716/rooms/")
+              and path.endswith("/batch_send")):
+            return f"/unstable/rooms/.../batch_send"
         elif path.startswith("/_matrix/client/r0/user/") and len(parts) > 6:
             if len(parts) > 8 and parts[6] == "rooms":
                 end = "/..." if len(parts) > 9 else ""
@@ -383,6 +386,12 @@ class ClientProxy:
             del query["access_token"]
         except KeyError:
             pass
+        try:
+            del query["com.beeper.also_allow_user"]
+        except KeyError:
+            pass
+        if req.path.endswith("/batch_send"):
+            query["com.beeper.also_allow_user"] = f"@{az.owner}{self.mxid_suffix}"
         az_prefix = f"{self.mxid_prefix}{az.owner}_{az.prefix}_"
         if "user_id" not in query:
             query["user_id"] = f"{az_prefix}{az.bot}{self.mxid_suffix}"
