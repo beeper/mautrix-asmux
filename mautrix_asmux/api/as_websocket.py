@@ -38,7 +38,8 @@ class SyncProxyNotActive(MatrixStandardRequestError):
 class AppServiceWebsocketHandler:
     log: TraceLogger = logging.getLogger("mau.api.as_websocket")
     websockets: dict[UUID, WebsocketHandler]
-    status_endpoint: Optional[str]
+    remote_status_endpoint: Optional[str]
+    bridge_status_endpoint: Optional[str]
     sync_proxy: Optional[URL]
     sync_proxy_token: Optional[str]
     sync_proxy_own_address: Optional[str]
@@ -49,7 +50,8 @@ class AppServiceWebsocketHandler:
     _stopping: bool
 
     def __init__(self, config: Config, mxid_prefix: str, mxid_suffix: str) -> None:
-        self.status_endpoint = config["mux.status_endpoint"]
+        self.remote_status_endpoint = config["mux.remote_status_endpoint"]
+        self.bridge_status_endpoint = config["mux.bridge_status_endpoint"]
         self.sync_proxy = (URL(config["mux.sync_proxy.url"]) if config["mux.sync_proxy.url"]
                            else None)
         self.sync_proxy_token = config["mux.sync_proxy.token"]
@@ -68,15 +70,33 @@ class AppServiceWebsocketHandler:
                                         status="server_shutting_down")
                                for ws in self.websockets.values()))
 
-    async def send_bridge_status(self, az: AppService, state: Union[dict[str, Any], BridgeState]
+    async def send_remote_status(self, az: AppService, state: Union[dict[str, Any], BridgeState]
                                  ) -> None:
-        if not self.status_endpoint:
+        if not self.remote_status_endpoint:
             return
         if not isinstance(state, BridgeState):
             state = BridgeState.deserialize(migrate_state_data(state, is_global=False))
-        self.log.debug(f"Sending bridge status for {az.name} to API server: {state}")
-        await state.send(url=self.status_endpoint.format(owner=az.owner, prefix=az.prefix),
+        self.log.debug(f"Sending remote status for {az.name} to API server: {state}")
+        await state.send(url=self.remote_status_endpoint.format(owner=az.owner, prefix=az.prefix),
                          token=az.real_as_token, log=self.log, log_sent=False)
+
+    async def send_bridge_status(self, az: AppService, state_event: BridgeStateEvent) -> None:
+        if not self.bridge_status_endpoint:
+            return
+        self.log.debug(f"Sending bridge status for {az.name} to API server: {state_event}")
+        headers = {"Authorization": f"Bearer {az.real_as_token}"}
+        body = {"stateEvent": state_event.serialize()}
+        url = self.bridge_status_endpoint.format(owner=az.owner, prefix=az.prefix)
+        try:
+            async with aiohttp.ClientSession() as sess, sess.post(url, json=body,
+                                                                  headers=headers) as resp:
+                if not 200 <= resp.status < 300:
+                    text = await resp.text()
+                    text = text.replace("\n", "\\n")
+                    self.log.warning(f"Unexpected status code {resp.status} "
+                                     f"sending bridge state update: {text}")
+        except Exception as e:
+            self.log.warning(f"Failed to send updated bridge state: {e}")
 
     @staticmethod
     async def _get_response(resp: aiohttp.ClientResponse) -> Dict[str, Any]:
@@ -139,7 +159,7 @@ class AppServiceWebsocketHandler:
         ws = WebsocketHandler(type_name="Websocket transaction connection",
                               proto="fi.mau.as_sync",
                               log=self.log.getChild(az.name).getChild(identifier))
-        ws.set_handler("bridge_status", lambda handler, data: self.send_bridge_status(az, data))
+        ws.set_handler("bridge_status", lambda handler, data: self.send_remote_status(az, data))
         ws.set_handler("start_sync", lambda handler, data: self.start_sync_proxy(az, data))
         ws.set_handler("ping", self.ping_server)
         await ws.prepare(req)

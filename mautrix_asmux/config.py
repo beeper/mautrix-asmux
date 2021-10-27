@@ -76,7 +76,13 @@ class Config(BaseFileConfig, BaseValidatableConfig):
             copy("mux.shared_secret")
 
         copy_dict("mux.bridge_config_template_files")
-        copy("mux.status_endpoint")
+        if "mux.status_endpoint" in self:
+            status = self["mux.status_endpoint"]
+            base["mux.remote_status_endpoint"] = status
+            base["mux.bridge_status_endpoint"] = status.replace("/state", "/bridge_state")
+        else:
+            copy("mux.remote_status_endpoint")
+            copy("mux.bridge_status_endpoint")
         copy("mux.sync_proxy.url")
         copy("mux.sync_proxy.token")
         copy("mux.sync_proxy.asmux_address")

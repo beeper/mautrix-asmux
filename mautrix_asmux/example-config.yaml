@@ -58,7 +58,8 @@ mux:
     bridge_config_template_files: {}
     # Endpoint for reporting bridge status.
     # Currently used for reporting transaction websocket disconnections.
-    status_endpoint: null
+    remote_status_endpoint: null
+    bridge_status_endpoint: null
     # Settings for mautrix-syncproxy to do encryption-related /syncing in the cloud.
     sync_proxy:
         # Address where mautrix-asmux can reach the sync proxy.
