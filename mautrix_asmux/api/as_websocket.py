@@ -181,10 +181,7 @@ class AppServiceWebsocketHandler:
                 del self.websockets[az.id]
                 asyncio.create_task(self.stop_sync_proxy(az))
                 if not self._stopping:
-                    await self.send_bridge_status(az, BridgeState(
-                        state_event=BridgeStateEvent.BRIDGE_UNREACHABLE,
-                        error="websocket-not-connected",
-                    ).fill())
+                    await self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE)
         return ws.response
 
     async def post_events(self, appservice: AppService, events: Events) -> str:
