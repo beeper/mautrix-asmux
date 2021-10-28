@@ -6,7 +6,6 @@ from uuid import UUID
 import logging
 import asyncio
 import time
-import json
 
 from attr import dataclass
 from aiohttp import web
@@ -22,6 +21,8 @@ from mautrix.util.bridge_state import BridgeStateEvent, GlobalBridgeState, Bridg
 from ..database import Room, AppService
 from ..segment import track_events
 from .errors import Error
+from .message_send_checkpoint import (MessageSendCheckpoint, MessageSendCheckpointStatus,
+                                      MessageSendCheckpointStep)
 
 if TYPE_CHECKING:
     from ..server import MuxServer
@@ -111,7 +112,7 @@ class AppServiceProxy(AppServiceServerMixin):
     locks: dict[UUID, asyncio.Lock]
 
     def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_token: str,
-                 http: aiohttp.ClientSession) -> None:
+                 message_send_checkpoint_endpoint: str, http: aiohttp.ClientSession) -> None:
         super().__init__(ephemeral_events=True)
         self.server = server
         self.mxid_prefix = mxid_prefix
@@ -119,12 +120,72 @@ class AppServiceProxy(AppServiceServerMixin):
         self.hs_token = hs_token
         self.http = http
         self.locks = defaultdict(lambda: asyncio.Lock())
+        self.message_send_checkpoint_endpoint = message_send_checkpoint_endpoint
+
+    # TODO maybe move the message send stuff to its own class later. Esp. if we end up adding a
+    # bunch of redis logic or something.
+    checkpoint_types = {
+        "m.room.redaction",
+        "m.room.message",
+        "m.room.encrypted",
+        "m.sticker",
+        "m.reaction",
+        "m.call.invite",
+        "m.call.candidates",
+        "m.call.select_answer",
+        "m.call.answer",
+        "m.call.hangup",
+        "m.call.reject",
+        "m.call.negotiate",
+    }
+    async def send_message_send_checkpoints(self, appservice: AppService, events: Events):
+        if not self.message_send_checkpoint_endpoint:
+            return
+        self.log.debug(f"Sending message send checkpoints for {appservice.name} to API server.")
+
+        checkpoints = []
+        for event in events.pdu:
+            event_type = event.get("type")
+            if event_type not in self.checkpoint_types:
+                continue
+
+            message_type = None
+            if event_type == "m.room.message":
+                message_type = event.get("content", {}).get("msgtype")
+
+            checkpoints.append(
+                MessageSendCheckpoint(
+                    event_id=event.get("event_id"),
+                    room_id=event.get("room_id"),
+                    username=appservice.owner,
+                    step=MessageSendCheckpointStep.HOMESERVER,
+                    bridge=appservice.prefix,
+                    timestamp=event.get("origin_server_ts"),
+                    status=MessageSendCheckpointStatus.SUCCESS,
+                    event_type=event_type,
+                    message_type=message_type,
+                )
+            )
+
+        # Send the checkpoints
+        url = self.message_send_checkpoint_endpoint
+        try:
+            async with aiohttp.ClientSession() as sess, sess.post(url, json=checkpoints) as resp:
+                if not 200 <= resp.status < 300:
+                    text = await resp.text()
+                    text = text.replace("\n", "\\n")
+                    self.log.warning(f"Unexpected status code {resp.status} sending message send"
+                                     f" checkpoints for {appservice.name}: {text}")
+        except Exception as e:
+            self.log.warning(f"Failed to send message send checkpoints for {appservice.name}: {e}")
 
     async def post_events(self, appservice: AppService, events: Events) -> str:
         async with self.locks[appservice.id]:
             for type in events.types:
                 ACCEPTED_EVENTS.labels(owner=appservice.owner, bridge=appservice.prefix,
                                        type=type).inc()
+
+            asyncio.create_task(self.send_message_send_checkpoints(appservice, events))
             status = None
             try:
                 self.log.trace("Sending transaction to %s: %s", appservice.name, events)
