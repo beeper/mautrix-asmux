@@ -24,6 +24,7 @@ from .errors import Error
 from .as_proxy import Events, make_ping_error, migrate_state_data
 from .websocket_util import WebsocketHandler
 
+SEND_TIMEOUT = 20
 WS_CLOSE_REPLACED = 4001
 CONNECTED_WEBSOCKETS = Gauge("asmux_connected_websockets",
                              "Bridges connected to the appservice transaction websocket",
@@ -156,8 +157,9 @@ class AppServiceWebsocketHandler:
         if az.push:
             raise Error.appservice_ws_not_enabled
         identifier = req.headers.get("X-Mautrix-Process-ID", "unidentified")
+        proto_version = int(req.headers.get("X-Mautrix-Websocket-Version", "1"))
         ws = WebsocketHandler(type_name="Websocket transaction connection",
-                              proto="fi.mau.as_sync",
+                              proto="fi.mau.as_sync", version=proto_version,
                               log=self.log.getChild(az.name).getChild(identifier))
         ws.set_handler("bridge_status", lambda handler, data: self.send_remote_status(az, data))
         ws.set_handler("start_sync", lambda handler, data: self.start_sync_proxy(az, data))
@@ -194,9 +196,15 @@ class AppServiceWebsocketHandler:
             return "websocket-not-connected"
         self.log.debug(f"Sending transaction {events.txn_id} to {appservice.name} via websocket")
         try:
-            await ws.send(raise_errors=True, command="transaction", status="ok",
-                          txn_id=events.txn_id, **events.serialize())
-        except Exception:
+            data = {"status": "ok", **events.serialize()}
+            if ws.proto >= 2:
+                await asyncio.wait_for(ws.request("transaction", top_level_data=data),
+                                       timeout=SEND_TIMEOUT)
+            else:
+                # Legacy API where client doesn't send acknowledgements
+                await ws.send(raise_errors=True, command="transaction", **data)
+        except Exception as e:
+            self.log.warning(f"Failed to send {events.txn_id} to {appservice.name}: {e}")
             return "websocket-send-fail"
         return "ok"
 
@@ -210,8 +218,12 @@ class AppServiceWebsocketHandler:
             return "websocket-not-connected"
         self.log.debug(f"Sending transaction {txn_id} to {appservice.name} via websocket")
         try:
-            await ws.send(raise_errors=True, command="syncproxy_error", status="ok",
-                          data={"txn_id": txn_id, **data})
+            if ws.proto >= 2:
+                await asyncio.wait_for(ws.request("syncproxy_error", txn_id=txn_id, **data),
+                                       timeout=SEND_TIMEOUT)
+            else:
+                # Legacy API where client doesn't send acknowledgements
+                await ws.send(raise_errors=True, command="transaction", **data)
         except Exception:
             return "websocket-send-fail"
         return "ok"

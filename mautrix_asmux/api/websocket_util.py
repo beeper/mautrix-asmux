@@ -12,6 +12,10 @@ Data = dict[str, Any]
 CommandHandler = Callable[['WebsocketHandler', Data], Awaitable[Optional[Data]]]
 
 
+class WebsocketClosedError(Exception):
+    pass
+
+
 class WebsocketHandler:
     _ws: web.WebSocketResponse
     log: logging.Logger
@@ -19,11 +23,13 @@ class WebsocketHandler:
     _request_waiters: dict[int, asyncio.Future]
     _command_handlers: dict[str, CommandHandler]
     _prev_req_id: int
+    version: int
 
-    def __init__(self, type_name: str, log: logging.Logger, proto: str) -> None:
+    def __init__(self, type_name: str, log: logging.Logger, proto: str, version: int) -> None:
         self.type_name = type_name
         self._ws = web.WebSocketResponse(protocols=(proto,))
         self.log = log
+        self.proto = version
         self._prev_req_id = 0
         self._request_waiters = {}
         self._command_handlers = {}
@@ -47,6 +53,11 @@ class WebsocketHandler:
         else:
             if req_id is not None:
                 await self.send(command="response", id=req_id, data=resp)
+
+    def _clear_request_waiters(self) -> None:
+        for waiter in self._request_waiters.values():
+            waiter.set_exception(WebsocketClosedError("Websocket closed before response received"))
+        self._request_waiters = {}
 
     def _handle_text(self, msg: WSMessage) -> None:
         try:
@@ -109,11 +120,12 @@ class WebsocketHandler:
             if raise_errors:
                 raise
 
-    async def request(self, command: str, **kwargs: Any) -> Optional[Data]:
+    async def request(self, command: str, *, top_level_data: Optional[Dict[str, Any]] = None,
+                      **kwargs: Any) -> Optional[Data]:
         self._prev_req_id += 1
         req_id = self._prev_req_id
         self._request_waiters[req_id] = fut = asyncio.get_running_loop().create_future()
-        await self.send(command=command, id=req_id, data=kwargs)
+        await self.send(command=command, id=req_id, data=kwargs, **(top_level_data or {}))
         return await fut
 
     def prepare(self, req: web.Request) -> Awaitable[None]:
@@ -142,3 +154,4 @@ class WebsocketHandler:
             self.log.exception("Fatal error in websocket handler")
         else:
             self.log.debug(f"{self.type_name} closed")
+        self._clear_request_waiters()
