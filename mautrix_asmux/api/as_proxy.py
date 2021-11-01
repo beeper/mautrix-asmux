@@ -20,6 +20,7 @@ from mautrix.util.bridge_state import BridgeStateEvent, GlobalBridgeState, Bridg
 
 from ..database import Room, AppService
 from ..segment import track_events
+from ..util import BRIDGE_DOUBLE_PUPPET_INDICATORS
 from .errors import Error
 from .message_send_checkpoint import (MessageSendCheckpoint, MessageSendCheckpointStatus,
                                       MessageSendCheckpointStep)
@@ -138,6 +139,21 @@ class AppServiceProxy(AppServiceServerMixin):
         "m.call.reject",
         "m.call.negotiate",
     }
+
+    def should_send_checkpoint(self, event) -> bool:
+        event_type = event.get("type")
+        if event_type not in self.checkpoint_types:
+            return False
+
+        if event.get("sender").startswith(self.mxid_prefix):
+            return False
+
+        for bridge in BRIDGE_DOUBLE_PUPPET_INDICATORS:
+            if event.get("content").get(f"net.maunium.{bridge}.puppet", False):
+                return False
+
+        return True
+
     async def send_message_send_checkpoints(self, appservice: AppService, events: Events):
         if not self.message_send_checkpoint_endpoint:
             return
@@ -145,13 +161,10 @@ class AppServiceProxy(AppServiceServerMixin):
 
         checkpoints = []
         for event in events.pdu:
+            if not self.should_send_checkpoint(event):
+                continue
+
             event_type = event.get("type")
-            if event_type not in self.checkpoint_types:
-                continue
-
-            if event.get("sender").startswith(self.mxid_prefix):
-                continue
-
             message_type = None
             if event_type == "m.room.message":
                 message_type = event.get("content", {}).get("msgtype")

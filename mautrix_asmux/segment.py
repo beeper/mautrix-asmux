@@ -8,6 +8,8 @@ import time
 import aiohttp
 from yarl import URL
 
+from .util import BRIDGE_DOUBLE_PUPPET_INDICATORS
+
 if TYPE_CHECKING:
     from mautrix.types import JSON
     from .database import AppService
@@ -62,8 +64,7 @@ def _get_tracking_event_type(appservice: 'AppService', event: 'JSON') -> Optiona
         relates_to = {}
     if relates_to.get("rel_type", None) == "m.replace":
         return None  # message is an edit
-    for bridge in ("telegram", "whatsapp", "facebook", "hangouts", "amp", "twitter", "signal",
-                   "instagram", "imessage"):
+    for bridge in BRIDGE_DOUBLE_PUPPET_INDICATORS:
         if content.get(f"net.maunium.{bridge}.puppet", False):
             return "Outgoing remote event"
     if content.get("source", None) in ("slack", "discord"):
