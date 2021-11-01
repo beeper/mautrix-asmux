@@ -149,6 +149,9 @@ class AppServiceProxy(AppServiceServerMixin):
             if event_type not in self.checkpoint_types:
                 continue
 
+            if event.get("sender").startswith(self.mxid_prefix):
+                continue
+
             message_type = None
             if event_type == "m.room.message":
                 message_type = event.get("content", {}).get("msgtype")
