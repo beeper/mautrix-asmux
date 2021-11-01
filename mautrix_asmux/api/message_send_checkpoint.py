@@ -2,6 +2,7 @@ from typing import Optional
 from attr import dataclass
 from mautrix.types.util.serializable import SerializableEnum
 from mautrix.types.event.message import MessageType
+from mautrix.types.util.serializable_attrs import SerializableAttrs
 
 
 class MessageSendCheckpointStep(SerializableEnum):
@@ -23,7 +24,7 @@ class MessageSendCheckpointReportedBy(SerializableEnum):
 
 
 @dataclass
-class MessageSendCheckpoint:
+class MessageSendCheckpoint(SerializableAttrs):
     event_id: str
     room_id: str
     username: str

@@ -164,8 +164,11 @@ class AppServiceProxy(AppServiceServerMixin):
                     status=MessageSendCheckpointStatus.SUCCESS,
                     event_type=event_type,
                     message_type=message_type,
-                )
+                ).serialize()
             )
+
+        if not checkpoints:
+            return
 
         # Send the checkpoints
         url = self.message_send_checkpoint_endpoint
