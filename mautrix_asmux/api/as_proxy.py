@@ -6,6 +6,7 @@ from uuid import UUID
 import logging
 import asyncio
 import time
+from aiohttp.client import ClientTimeout
 
 from attr import dataclass
 from aiohttp import web
@@ -193,7 +194,8 @@ class AppServiceProxy(AppServiceServerMixin):
         try:
             headers = {"Authorization": f"Bearer {appservice.real_as_token}"}
             async with aiohttp.ClientSession() as sess, \
-                       sess.post(url, json={"checkpoints": checkpoints}, headers=headers) as resp:
+                       sess.post(url, json={"checkpoints": checkpoints}, headers=headers,
+                                 timeout=ClientTimeout(5)) as resp:
                 if not 200 <= resp.status < 300:
                     text = await resp.text()
                     text = text.replace("\n", "\\n")
