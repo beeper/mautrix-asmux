@@ -167,11 +167,6 @@ class AppServiceProxy(AppServiceServerMixin):
             if not self.should_send_checkpoint(event):
                 continue
 
-            event_type = event.get("type")
-            message_type = None
-            if event_type == "m.room.message":
-                message_type = event.get("content", {}).get("msgtype")
-
             checkpoints.append(
                 MessageSendCheckpoint(
                     event_id=event.get("event_id"),
@@ -181,8 +176,7 @@ class AppServiceProxy(AppServiceServerMixin):
                     bridge=appservice.prefix,
                     timestamp=event.get("origin_server_ts"),
                     status=MessageSendCheckpointStatus.SUCCESS,
-                    event_type=event_type,
-                    message_type=message_type,
+                    event_type=event.get("type"),
                 ).serialize()
             )
 

@@ -1,7 +1,6 @@
 from typing import Optional
 from attr import dataclass
 from mautrix.types.util.serializable import SerializableEnum
-from mautrix.types.event.message import MessageType
 from mautrix.types.util.serializable_attrs import SerializableAttrs
 
 
@@ -34,6 +33,5 @@ class MessageSendCheckpoint(SerializableAttrs):
     status: MessageSendCheckpointStatus
     event_type: str
     retry_num: int = 0
-    message_type: Optional[MessageType] = None
     info: Optional[str] = None
     reported_by: MessageSendCheckpointReportedBy = MessageSendCheckpointReportedBy.ASMUX
