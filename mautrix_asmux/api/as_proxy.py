@@ -148,9 +148,12 @@ class AppServiceProxy(AppServiceServerMixin):
         if event.get("sender").startswith(self.mxid_prefix):
             return False
 
+        content = event.get("content")
         for bridge in BRIDGE_DOUBLE_PUPPET_INDICATORS:
-            if event.get("content").get(f"net.maunium.{bridge}.puppet", False):
+            if content.get(f"net.maunium.{bridge}.puppet", False):
                 return False
+        if content.get("source", None) in ("slack", "discord"):
+            return False
 
         return True
 
