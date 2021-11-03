@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Any, Awaitable, TYPE_CHECKING
+from typing import List, Optional, Any, Awaitable, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
@@ -161,19 +161,22 @@ class AppServiceProxy(AppServiceServerMixin):
         if not self.message_send_checkpoint_endpoint:
             return
         self.log.debug(f"Sending message send checkpoints for {appservice.name} to API server.")
+        username = appservice.owner
+        bridge = appservice.prefix
 
         checkpoints = []
         for event in events.pdu:
             if not self.should_send_checkpoint(event):
                 continue
 
+            # appservice.owner is username, appservice.prefix is bridge
             checkpoints.append(
                 MessageSendCheckpoint(
                     event_id=event.get("event_id"),
                     room_id=event.get("room_id"),
-                    username=appservice.owner,
+                    username=username,
                     step=MessageSendCheckpointStep.HOMESERVER,
-                    bridge=appservice.prefix,
+                    bridge=bridge,
                     timestamp=event.get("origin_server_ts"),
                     status=MessageSendCheckpointStatus.SUCCESS,
                     event_type=event.get("type"),
@@ -183,17 +186,23 @@ class AppServiceProxy(AppServiceServerMixin):
         if not checkpoints:
             return
 
-        # Send the checkpoints
-        url = self.message_send_checkpoint_endpoint
+        url = "{}/bridgebox/{}/bridge/{}/send_message_metrics".format(
+            self.message_send_checkpoint_endpoint, appservice.owner, appservice.prefix
+        )
+
         try:
-            async with aiohttp.ClientSession() as sess, sess.post(url, json=checkpoints) as resp:
+            headers = {"Authorization": f"Bearer {appservice.real_as_token}"}
+            async with aiohttp.ClientSession() as sess, \
+                       sess.post(url, json={"checkpoints": checkpoints}, headers=headers) as resp:
                 if not 200 <= resp.status < 300:
                     text = await resp.text()
                     text = text.replace("\n", "\\n")
                     self.log.warning(f"Unexpected status code {resp.status} sending message send"
-                                     f" checkpoints for {appservice.name}: {text}")
+                                     f" checkpoints for {username}/{bridge}: {text}")
         except Exception as e:
-            self.log.warning(f"Failed to send message send checkpoints for {appservice.name}: {e}")
+            self.log.warning(
+                f"Failed to send message send checkpoints for {username}/{bridge}: {e}"
+            )
 
     async def post_events(self, appservice: AppService, events: Events) -> str:
         async with self.locks[appservice.id]:
