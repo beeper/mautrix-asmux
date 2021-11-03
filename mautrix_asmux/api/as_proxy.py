@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import List, Optional, Any, Awaitable, TYPE_CHECKING
+from typing import Optional, Any, Awaitable, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
@@ -18,13 +18,17 @@ from mautrix.appservice import AppServiceServerMixin
 from mautrix.util.opt_prometheus import Counter
 from mautrix.util.logging import TraceLogger
 from mautrix.util.bridge_state import BridgeStateEvent, GlobalBridgeState, BridgeState
+from mautrix.util.message_send_checkpoint import (
+    MessageSendCheckpoint,
+    MessageSendCheckpointReportedBy,
+    MessageSendCheckpointStatus,
+    MessageSendCheckpointStep,
+)
 
 from ..database import Room, AppService
 from ..segment import track_events
 from ..util import BRIDGE_DOUBLE_PUPPET_INDICATORS
 from .errors import Error
-from .message_send_checkpoint import (MessageSendCheckpoint, MessageSendCheckpointStatus,
-                                      MessageSendCheckpointStep)
 
 if TYPE_CHECKING:
     from ..server import MuxServer
@@ -174,12 +178,11 @@ class AppServiceProxy(AppServiceServerMixin):
                 MessageSendCheckpoint(
                     event_id=event.get("event_id"),
                     room_id=event.get("room_id"),
-                    username=username,
                     step=MessageSendCheckpointStep.HOMESERVER,
-                    bridge=bridge,
                     timestamp=event.get("origin_server_ts"),
                     status=MessageSendCheckpointStatus.SUCCESS,
                     event_type=event.get("type"),
+                    reported_by=MessageSendCheckpointReportedBy.ASMUX
                 ).serialize()
             )
 
