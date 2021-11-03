@@ -161,7 +161,6 @@ class AppServiceProxy(AppServiceServerMixin):
     async def send_message_send_checkpoints(self, appservice: AppService, events: Events):
         if not self.message_send_checkpoint_endpoint:
             return
-        self.log.debug(f"Sending message send checkpoints for {appservice.name} to API server.")
         username = appservice.owner
         bridge = appservice.prefix
 
@@ -186,6 +185,8 @@ class AppServiceProxy(AppServiceServerMixin):
 
         if not checkpoints:
             return
+
+        self.log.debug(f"Sending message send checkpoints for {appservice.name} to API server.")
 
         url = "{}/bridgebox/{}/bridge/{}/send_message_metrics".format(
             self.message_send_checkpoint_endpoint, appservice.owner, appservice.prefix
