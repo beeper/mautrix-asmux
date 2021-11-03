@@ -83,6 +83,7 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         else:
             copy("mux.remote_status_endpoint")
             copy("mux.bridge_status_endpoint")
+        copy("mux.message_send_checkpoint_endpoint")
         copy("mux.sync_proxy.url")
         copy("mux.sync_proxy.token")
         copy("mux.sync_proxy.asmux_address")
