@@ -60,6 +60,8 @@ mux:
     # Currently used for reporting transaction websocket disconnections.
     remote_status_endpoint: null
     bridge_status_endpoint: null
+    # Endpoint for reporting per-message status.
+    message_send_checkpoint_endpoint: null
     # Settings for mautrix-syncproxy to do encryption-related /syncing in the cloud.
     sync_proxy:
         # Address where mautrix-asmux can reach the sync proxy.
