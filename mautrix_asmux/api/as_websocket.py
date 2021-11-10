@@ -84,10 +84,10 @@ class AppServiceWebsocketHandler:
     async def send_bridge_status(self, az: AppService, state_event: BridgeStateEvent) -> None:
         if not self.bridge_status_endpoint:
             return
-        self.log.debug(f"Sending bridge status for {az.name} to API server: {state_event}")
         headers = {"Authorization": f"Bearer {az.real_as_token}"}
         body = {"stateEvent": state_event.serialize()}
         url = self.bridge_status_endpoint.format(owner=az.owner, prefix=az.prefix)
+        self.log.debug(f"Sending bridge status for {az.name} to API server {url}: {state_event}")
         try:
             async with aiohttp.ClientSession() as sess, sess.post(url, json=body,
                                                                   headers=headers) as resp:
@@ -181,9 +181,10 @@ class AppServiceWebsocketHandler:
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).dec()
             if self.websockets.get(az.id) == ws:
                 del self.websockets[az.id]
+
                 asyncio.create_task(self.stop_sync_proxy(az))
                 if not self._stopping:
-                    await self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE)
+                    asyncio.create_task(self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE))
         return ws.response
 
     async def post_events(self, appservice: AppService, events: Events) -> str:
