@@ -50,7 +50,8 @@ class AppServiceMux(Program):
 
     def prepare(self) -> None:
         super().prepare()
-        self.database = Database(url=self.config["mux.database"], upgrade_table=upgrade_table)
+        self.database = Database.create(url=self.config["mux.database"],
+                                        upgrade_table=upgrade_table)
         Base.db = self.database
         self.client = self.loop.run_until_complete(self._create_client())
         self.server = MuxServer(self.config, http=self.client)
@@ -76,6 +77,7 @@ class AppServiceMux(Program):
 
     async def stop(self) -> None:
         await self.server.stop()
+        await self.database.stop()
         await super().stop()
 
 
