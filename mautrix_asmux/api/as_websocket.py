@@ -205,7 +205,7 @@ class AppServiceWebsocketHandler:
                 # Legacy API where client doesn't send acknowledgements
                 await ws.send(raise_errors=True, command="transaction", **data)
         except Exception as e:
-            self.log.warning(f"Failed to send {events.txn_id} to {appservice.name}: {e}")
+            self.log.warning(f"Failed to send {events.txn_id} to {appservice.name}: {type(e)} {e}")
             return "websocket-send-fail"
         return "ok"
 
