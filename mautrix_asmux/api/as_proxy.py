@@ -173,7 +173,7 @@ class AppServiceProxy(AppServiceServerMixin):
             if not self.should_send_checkpoint(event):
                 continue
 
-            checkpoint = MessageSendCheckpoint(
+            homeserver_checkpoint = MessageSendCheckpoint(
                 event_id=event.get("event_id"),
                 room_id=event.get("room_id"),
                 step=MessageSendCheckpointStep.HOMESERVER,
@@ -182,15 +182,19 @@ class AppServiceProxy(AppServiceServerMixin):
                 event_type=event.get("type"),
                 reported_by=MessageSendCheckpointReportedBy.ASMUX
             )
-            checkpoints.append(checkpoint.serialize())
 
             try:
-                checkpoint.timestamp = event["content"]["com.beeper.origin_client_ts"]
+                client_checkpoint = attr.evolve(
+                    homeserver_checkpoint,
+                    step=MessageSendCheckpointStep.CLIENT,
+                    timestamp=event["content"]["com.beeper.origin_client_ts"],
+                )
             except (KeyError, TypeError):
                 pass
             else:
-                checkpoint.step = MessageSendCheckpointStep.CLIENT
-                checkpoints.append(checkpoint.serialize())
+                checkpoints.append(client_checkpoint.serialize())
+
+            checkpoints.append(homeserver_checkpoint.serialize())
 
         if not checkpoints:
             return
