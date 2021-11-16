@@ -14,7 +14,7 @@ from aiohttp.http import WSCloseCode
 
 from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
 from mautrix.util.logging import TraceLogger
-from mautrix.util.opt_prometheus import Gauge
+from mautrix.util.opt_prometheus import Gauge, Counter
 from mautrix.errors import make_request_error, standard_error, MatrixStandardRequestError
 
 from ..database import AppService
@@ -22,7 +22,7 @@ from ..config import Config
 from ..segment import track_events
 from .cs_proxy import ClientProxy
 from .errors import Error
-from .as_proxy import Events, make_ping_error, migrate_state_data, SUCCESSFUL_EVENTS
+from .as_proxy import Events, make_ping_error, migrate_state_data, SUCCESSFUL_EVENTS, FAILED_EVENTS
 from .as_queue import AppServiceQueue, QueueWaiterOverridden
 from .websocket_util import WebsocketHandler
 
@@ -199,11 +199,40 @@ class AppServiceWebsocketHandler:
                     ))
         return ws.response
 
-    def _send_metrics(self, az: AppService, txn: Events) -> None:
+    def _send_metrics(self, az: AppService, txn: Events, metric: Counter) -> None:
+        for type in txn.types:
+            metric.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
+
+    async def _send_next_txn(self, az: AppService, ws: WebsocketHandler, txn: Events) -> None:
+        ws.log.debug(f"Sending transaction {txn.txn_id} to {az.name} via websocket")
+        data = {"status": "ok", "txn_id": txn.txn_id, **txn.serialize()}
+        if ws.proto >= 3:
+            await asyncio.wait_for(
+                ws.request("transaction", top_level_data=data, raise_errors=True),
+                timeout=SEND_TIMEOUT
+            )
+        elif ws.proto >= 2:
+            # Legacy protocol where client can't handle duplicate transactions properly,
+            # so we can't safely retry on timeout.
+            try:
+                await asyncio.wait_for(
+                    ws.request("transaction", top_level_data=data, raise_errors=True),
+                    timeout=SEND_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
+                               f"didn't get response within {SEND_TIMEOUT} seconds"
+                               f" -- legacy protocol, dropping transaction")
+                ws.timeouts += 1
+                self._send_metrics(az, txn, FAILED_EVENTS)
+                return
+        else:
+            # Legacy protocol where client doesn't send acknowledgements
+            await ws.send(raise_errors=True, command="transaction", **data)
+        ws.timeouts = 0
         self.log.debug(f"Successfully sent {txn.txn_id} to {az.name}")
         asyncio.create_task(track_events(az, txn))
-        for type in txn.types:
-            SUCCESSFUL_EVENTS.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
+        self._send_metrics(az, txn, SUCCESSFUL_EVENTS)
 
     async def _consume_queue(self, az: AppService, ws: WebsocketHandler) -> None:
         try:
@@ -214,17 +243,7 @@ class AppServiceWebsocketHandler:
         while True:
             try:
                 async with queue.next() as txn:
-                    ws.log.debug(f"Sending transaction {txn.txn_id} to {az.name} via websocket")
-                    data = {"status": "ok", "txn_id": txn.txn_id, **txn.serialize()}
-                    if ws.proto >= 2:
-                        await asyncio.wait_for(ws.request("transaction", top_level_data=data,
-                                                          raise_errors=True),
-                                               timeout=SEND_TIMEOUT)
-                        ws.timeouts = 0
-                    else:
-                        # Legacy API where client doesn't send acknowledgements
-                        await ws.send(raise_errors=True, command="transaction", **data)
-                    self._send_metrics(az, txn)
+                    await self._send_next_txn(az, ws, txn)
             except asyncio.TimeoutError:
                 ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
                                f"didn't get response within {SEND_TIMEOUT} seconds")

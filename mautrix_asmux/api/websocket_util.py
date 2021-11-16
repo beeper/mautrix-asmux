@@ -146,7 +146,7 @@ class WebsocketHandler:
 
     async def handle(self) -> None:
         try:
-            self.log.debug(f"{self.type_name} opened")
+            self.log.debug(f"{self.type_name} opened (proto: {self.proto})")
             msg: WSMessage
             async for msg in self._ws:
                 if msg.type == WSMsgType.ERROR:
