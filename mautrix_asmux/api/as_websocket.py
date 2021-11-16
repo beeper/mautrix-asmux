@@ -215,7 +215,7 @@ class AppServiceWebsocketHandler:
             try:
                 async with queue.next() as txn:
                     ws.log.debug(f"Sending transaction {txn.txn_id} to {az.name} via websocket")
-                    data = {"status": "ok", **txn.serialize()}
+                    data = {"status": "ok", "txn_id": txn.txn_id, **txn.serialize()}
                     if ws.proto >= 2:
                         await asyncio.wait_for(ws.request("transaction", top_level_data=data,
                                                           raise_errors=True),

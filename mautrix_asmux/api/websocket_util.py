@@ -86,9 +86,13 @@ class WebsocketHandler:
                 return
             try:
                 waiter = self._request_waiters.pop(req_id)
-            except (KeyError, ValueError, TypeError):
+            except KeyError:
                 self.log.debug(f"Unhandled response received: {req}")
             else:
+                if waiter.cancelled():
+                    self.log.debug(f"Got response to {req_id}, "
+                                   f"but the waiter is cancelled: {req}")
+                    return
                 self.log.debug(f"Received response to {req_id}: {req}")
                 if command == "response":
                     waiter.set_result(data)
