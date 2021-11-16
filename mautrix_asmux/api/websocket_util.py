@@ -23,16 +23,20 @@ class WebsocketHandler:
     _request_waiters: dict[int, asyncio.Future]
     _command_handlers: dict[str, CommandHandler]
     _prev_req_id: int
-    version: int
+    proto: int
+    timeouts: int
+    queue_task: Optional[asyncio.Task]
 
     def __init__(self, type_name: str, log: logging.Logger, proto: str, version: int) -> None:
         self.type_name = type_name
         self._ws = web.WebSocketResponse(protocols=(proto,))
         self.log = log
         self.proto = version
+        self.timeouts = 0
         self._prev_req_id = 0
         self._request_waiters = {}
         self._command_handlers = {}
+        self.queue_task = None
 
     @property
     def response(self) -> web.WebSocketResponse:
@@ -81,10 +85,14 @@ class WebsocketHandler:
                 self.log.debug(f"Unhandled response received: {req}")
                 return
             try:
-                waiter = self._request_waiters[req_id]
-            except (KeyError, ValueError, TypeError):
+                waiter = self._request_waiters.pop(req_id)
+            except KeyError:
                 self.log.debug(f"Unhandled response received: {req}")
             else:
+                if waiter.cancelled():
+                    self.log.debug(f"Got response to {req_id}, "
+                                   f"but the waiter is cancelled: {req}")
+                    return
                 self.log.debug(f"Received response to {req_id}: {req}")
                 if command == "response":
                     waiter.set_result(data)
@@ -104,7 +112,12 @@ class WebsocketHandler:
             self.log.debug(f"Received {command} {req_id or '<no id>'}: {data}")
             asyncio.create_task(self._call_handler(handler, command, req_id, data))
 
+    def cancel_queue_task(self, reason: str) -> None:
+        if self.queue_task is not None and not self.queue_task.done():
+            self.queue_task.cancel(reason)
+
     async def close(self, code: Union[int, WSCloseCode], status: Optional[str] = None) -> None:
+        self.cancel_queue_task(f"Closing websocket ({code} / {status})")
         message = (json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
                    if status else None)
         try:
@@ -133,7 +146,7 @@ class WebsocketHandler:
 
     async def handle(self) -> None:
         try:
-            self.log.debug(f"{self.type_name} opened")
+            self.log.debug(f"{self.type_name} opened (proto: {self.proto})")
             msg: WSMessage
             async for msg in self._ws:
                 if msg.type == WSMsgType.ERROR:

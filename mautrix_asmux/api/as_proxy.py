@@ -227,19 +227,21 @@ class AppServiceProxy(AppServiceServerMixin):
                                        type=type).inc()
 
             asyncio.create_task(self.send_message_send_checkpoints(appservice, events))
-            status = None
+            if not appservice.push:
+                self.log.trace(f"Queueing {events.txn_id} to {appservice.name}")
+                await self.server.as_websocket.queue_events(appservice, events)
+                return "ok"
+            elif not appservice.address:
+                self.log.warning(f"Not sending transaction {events.txn_id} "
+                                 f"to {appservice.name}: no address configured")
+                return "no-address"
             try:
                 self.log.trace("Sending transaction to %s: %s", appservice.name, events)
-                if not appservice.push:
-                    status = await self.server.as_websocket.post_events(appservice, events)
-                elif appservice.address:
-                    status = await self.server.as_http.post_events(appservice, events)
-                else:
-                    self.log.warning(f"Not sending transaction {events.txn_id} "
-                                     f"to {appservice.name}: no address configured")
+                status = await self.server.as_http.post_events(appservice, events)
             except Exception:
                 self.log.exception(f"Fatal error sending transaction {events.txn_id} "
                                    f"to {appservice.name}")
+                status = "fatal-error"
             if status == "ok":
                 self.log.debug(f"Successfully sent {events.txn_id} to {appservice.name}")
                 asyncio.create_task(track_events(appservice, events))
