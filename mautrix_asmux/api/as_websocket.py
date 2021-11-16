@@ -19,13 +19,18 @@ from mautrix.errors import make_request_error, standard_error, MatrixStandardReq
 
 from ..database import AppService
 from ..config import Config
+from ..segment import track_events
 from .cs_proxy import ClientProxy
 from .errors import Error
-from .as_proxy import Events, make_ping_error, migrate_state_data
+from .as_proxy import Events, make_ping_error, migrate_state_data, SUCCESSFUL_EVENTS
+from .as_queue import AppServiceQueue, QueueWaiterOverridden
 from .websocket_util import WebsocketHandler
 
 SEND_TIMEOUT = 20
+# Allow client to not respond for ~3 minutes before websocket is disconnected
+TIMEOUT_COUNT_LIMIT = 10
 WS_CLOSE_REPLACED = 4001
+WS_NOT_ACKNOWLEDGED = 4002
 CONNECTED_WEBSOCKETS = Gauge("asmux_connected_websockets",
                              "Bridges connected to the appservice transaction websocket",
                              labelnames=["owner", "bridge"])
@@ -39,6 +44,7 @@ class SyncProxyNotActive(MatrixStandardRequestError):
 class AppServiceWebsocketHandler:
     log: TraceLogger = logging.getLogger("mau.api.as_websocket")
     websockets: dict[UUID, WebsocketHandler]
+    queues: dict[UUID, AppServiceQueue]
     remote_status_endpoint: Optional[str]
     bridge_status_endpoint: Optional[str]
     sync_proxy: Optional[URL]
@@ -61,6 +67,7 @@ class AppServiceWebsocketHandler:
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
         self.websockets = {}
+        self.queues = {}
         self.requests = {}
         self._stopping = False
 
@@ -171,43 +178,76 @@ class AppServiceWebsocketHandler:
             pass
         else:
             ws.log.debug(f"New websocket connection coming in, closing old one")
+
             await old_websocket.close(code=WS_CLOSE_REPLACED, status="conn_replaced")
         try:
             self.websockets[az.id] = ws
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).inc()
             await ws.send(command="connect", status="connected")
+            ws.queue_task = asyncio.create_task(self._consume_queue(az, ws))
             await ws.handle()
         finally:
+            ws.cancel_queue_task("Websocket disconnected")
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).dec()
             if self.websockets.get(az.id) == ws:
                 del self.websockets[az.id]
 
                 asyncio.create_task(self.stop_sync_proxy(az))
                 if not self._stopping:
-                    asyncio.create_task(self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE))
+                    asyncio.create_task(self.send_bridge_status(
+                        az, BridgeStateEvent.BRIDGE_UNREACHABLE,
+                    ))
         return ws.response
 
-    async def post_events(self, appservice: AppService, events: Events) -> str:
+    def _send_metrics(self, az: AppService, txn: Events) -> None:
+        self.log.debug(f"Successfully sent {txn.txn_id} to {az.name}")
+        asyncio.create_task(track_events(az, txn))
+        for type in txn.types:
+            SUCCESSFUL_EVENTS.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
+
+    async def _consume_queue(self, az: AppService, ws: WebsocketHandler) -> None:
         try:
-            ws = self.websockets[appservice.id]
+            queue = self.queues[az.id]
         except KeyError:
-            # TODO buffer transactions
-            self.log.warning(f"Not sending transaction {events.txn_id} to {appservice.name}: "
-                             f"websocket not connected")
-            return "websocket-not-connected"
-        self.log.debug(f"Sending transaction {events.txn_id} to {appservice.name} via websocket")
+            queue = self.queues[az.id] = AppServiceQueue(az)
+        ws.log.debug("Started consuming events from queue")
+        while True:
+            try:
+                async with queue.next() as txn:
+                    ws.log.debug(f"Sending transaction {txn.txn_id} to {az.name} via websocket")
+                    data = {"status": "ok", **txn.serialize()}
+                    if ws.proto >= 2:
+                        await asyncio.wait_for(ws.request("transaction", top_level_data=data,
+                                                          raise_errors=True),
+                                               timeout=SEND_TIMEOUT)
+                        ws.timeouts = 0
+                    else:
+                        # Legacy API where client doesn't send acknowledgements
+                        await ws.send(raise_errors=True, command="transaction", **data)
+                    self._send_metrics(az, txn)
+            except asyncio.TimeoutError:
+                ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
+                               f"didn't get response within {SEND_TIMEOUT} seconds")
+                ws.timeouts += 1
+                if ws.timeouts >= TIMEOUT_COUNT_LIMIT:
+                    asyncio.create_task(ws.close(code=WS_NOT_ACKNOWLEDGED,
+                                                 status="transactions_not_acknowledged"))
+                    return
+            except QueueWaiterOverridden:
+                self.log.exception("Got an unexpected QueueWaiterOverridden, exiting consumer")
+                raise
+            except Exception as e:
+                ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: {type(e).__name__} {e}")
+            except asyncio.CancelledError:
+                ws.log.debug("Queue consumer cancelled")
+                raise
+
+    async def queue_events(self, az: AppService, events: Events) -> None:
         try:
-            data = {"status": "ok", **events.serialize()}
-            if ws.proto >= 2:
-                await asyncio.wait_for(ws.request("transaction", top_level_data=data),
-                                       timeout=SEND_TIMEOUT)
-            else:
-                # Legacy API where client doesn't send acknowledgements
-                await ws.send(raise_errors=True, command="transaction", **data)
-        except Exception as e:
-            self.log.warning(f"Failed to send {events.txn_id} to {appservice.name}: {type(e)} {e}")
-            return "websocket-send-fail"
-        return "ok"
+            queue = self.queues[az.id]
+        except KeyError:
+            queue = self.queues[az.id] = AppServiceQueue(az)
+        queue.push(events)
 
     async def post_syncproxy_error(self, appservice: AppService, txn_id: str, data: dict[str, Any]
                                    ) -> str:
@@ -225,6 +265,9 @@ class AppServiceWebsocketHandler:
             else:
                 # Legacy API where client doesn't send acknowledgements
                 await ws.send(raise_errors=True, command="transaction", **data)
+        except asyncio.TimeoutError:
+            ws.timeouts += 1
+            return "websocket-send-fail"
         except Exception:
             return "websocket-send-fail"
         return "ok"
