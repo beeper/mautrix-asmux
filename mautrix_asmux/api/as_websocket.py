@@ -13,6 +13,7 @@ from aiohttp import web
 from aiohttp.http import WSCloseCode
 
 from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
+from mautrix.util.message_send_checkpoint import MessageSendCheckpoint
 from mautrix.util.logging import TraceLogger
 from mautrix.util.opt_prometheus import Gauge, Counter
 from mautrix.errors import make_request_error, standard_error, MatrixStandardRequestError
@@ -55,6 +56,8 @@ class AppServiceWebsocketHandler:
     mxid_prefix: str
     mxid_suffix: str
     _stopping: bool
+    checkpoint_url: str
+    api_server_sess: aiohttp.ClientSession
 
     def __init__(self, config: Config, mxid_prefix: str, mxid_suffix: str) -> None:
         self.remote_status_endpoint = config["mux.remote_status_endpoint"]
@@ -70,6 +73,8 @@ class AppServiceWebsocketHandler:
         self.queues = {}
         self.requests = {}
         self._stopping = False
+        self.checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
+        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
 
     async def stop(self) -> None:
         self._stopping = True
@@ -96,8 +101,7 @@ class AppServiceWebsocketHandler:
         url = self.bridge_status_endpoint.format(owner=az.owner, prefix=az.prefix)
         self.log.debug(f"Sending bridge status for {az.name} to API server {url}: {state_event}")
         try:
-            async with aiohttp.ClientSession() as sess, sess.post(url, json=body,
-                                                                  headers=headers) as resp:
+            async with self.api_server_sess.post(url, json=body, headers=headers) as resp:
                 if not 200 <= resp.status < 300:
                     text = await resp.text()
                     text = text.replace("\n", "\\n")
@@ -105,6 +109,19 @@ class AppServiceWebsocketHandler:
                                      f"sending bridge state update: {text}")
         except Exception as e:
             self.log.warning(f"Failed to send updated bridge state: {e}")
+
+    async def send_message_checkpoint(self, az: AppService, raw: dict[str, Any]) -> None:
+        url = f"{self.checkpoint_url}/bridgebox/{az.owner}/bridge/{az.prefix}/send_message_metrics"
+        headers = {"Authorization": f"Bearer {az.real_as_token}"}
+        try:
+            async with self.api_server_sess.post(url, json=raw, headers=headers) as resp:
+                if not 200 <= resp.status < 300:
+                    text = await resp.text()
+                    text = text.replace("\n", "\\n")
+                    self.log.warning(f"Unexpected status code {resp.status} sending message "
+                                     f"checkpoints on behalf of {az.name}: {text}")
+        except Exception as e:
+            self.log.warning(f"Failed to send message checkpoints on behalf of {az.name}: {e}")
 
     @staticmethod
     async def _get_response(resp: aiohttp.ClientResponse) -> Dict[str, Any]:
@@ -169,6 +186,8 @@ class AppServiceWebsocketHandler:
                               proto="fi.mau.as_sync", version=proto_version,
                               log=self.log.getChild(az.name).getChild(identifier))
         ws.set_handler("bridge_status", lambda handler, data: self.send_remote_status(az, data))
+        ws.set_handler("message_checkpoint",
+                       lambda handler, data: self.send_message_checkpoint(az, data))
         ws.set_handler("start_sync", lambda handler, data: self.start_sync_proxy(az, data))
         ws.set_handler("ping", self.ping_server)
         await ws.prepare(req)
