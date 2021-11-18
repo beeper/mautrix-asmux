@@ -21,6 +21,7 @@ from mautrix.util.logging import TraceLogger
 from mautrix.util.opt_prometheus import Gauge, Counter
 from mautrix.errors import make_request_error, standard_error, MatrixStandardRequestError
 from mautrix.types import JSON
+from mautrix.api import HTTPAPI
 
 from ..database import AppService
 from ..config import Config
@@ -80,8 +81,9 @@ class AppServiceWebsocketHandler:
         self.requests = {}
         self._stopping = False
         self.checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
-        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
-        self.sync_proxy_sess = aiohttp.ClientSession()
+        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20),
+                                                     headers={"User-Agent": HTTPAPI.default_ua})
+        self.sync_proxy_sess = aiohttp.ClientSession(headers={"User-Agent": HTTPAPI.default_ua})
 
     async def stop(self) -> None:
         self._stopping = True

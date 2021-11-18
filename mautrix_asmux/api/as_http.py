@@ -10,6 +10,7 @@ from yarl import URL
 from aiohttp import ClientError, ClientTimeout, ContentTypeError
 import aiohttp
 
+from mautrix.api import HTTPAPI
 from mautrix.util.bridge_state import GlobalBridgeState
 from mautrix.util.message_send_checkpoint import (
     MessageSendCheckpoint, MessageSendCheckpointStep, MessageSendCheckpointReportedBy,
@@ -18,7 +19,6 @@ from mautrix.util.message_send_checkpoint import (
 
 from ..database import AppService
 from .as_proxy import Events, make_ping_error, migrate_state_data, send_message_checkpoints
-from .errors import Error
 
 
 class AppServiceHTTPHandler:
@@ -30,7 +30,8 @@ class AppServiceHTTPHandler:
     def __init__(self, mxid_suffix: str, checkpoint_url: str, http: aiohttp.ClientSession) -> None:
         self.mxid_suffix = mxid_suffix
         self.http = http
-        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5))
+        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5),
+                                                     headers={"User-Agent": HTTPAPI.default_ua})
         self.checkpoint_url = checkpoint_url
 
     async def post_events(self, az: AppService, events: Events) -> str:

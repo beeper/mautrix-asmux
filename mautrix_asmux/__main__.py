@@ -6,6 +6,7 @@ from aiohttp import ClientSession, TCPConnector, DummyCookieJar
 
 from mautrix.util.program import Program
 from mautrix.util.async_db import Database
+from mautrix.api import HTTPAPI
 
 from . import __version__
 from .config import Config
@@ -53,6 +54,7 @@ class AppServiceMux(Program):
         self.database = Database.create(url=self.config["mux.database"],
                                         upgrade_table=upgrade_table)
         Base.db = self.database
+        HTTPAPI.default_ua = f"{self.name}/{self.version} {HTTPAPI.default_ua}"
         self.client = self.loop.run_until_complete(self._create_client())
         self.server = MuxServer(self.config, http=self.client)
         if self.config["segment.token"]:

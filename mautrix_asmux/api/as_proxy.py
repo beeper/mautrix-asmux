@@ -12,6 +12,7 @@ from aiohttp import web
 import aiohttp
 import attr
 
+from mautrix.api import HTTPAPI
 from mautrix.types import JSON, DeviceOTKCount, DeviceLists, UserID
 from mautrix.appservice import AppServiceServerMixin
 from mautrix.util.opt_prometheus import Counter
@@ -167,7 +168,8 @@ class AppServiceProxy(AppServiceServerMixin):
         self.http = http
         self.locks = defaultdict(lambda: asyncio.Lock())
         self.checkpoint_url = checkpoint_url
-        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5))
+        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5),
+                                                     headers={"User-Agent": HTTPAPI.default_ua})
 
     checkpoint_types = {str(evt_type) for evt_type in CHECKPOINT_TYPES}
 
