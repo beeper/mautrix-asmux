@@ -26,6 +26,7 @@ from mautrix.api import HTTPAPI
 from ..database import AppService
 from ..config import Config
 from ..segment import track_events
+from ..sygnal import PushKey
 from .cs_proxy import ClientProxy
 from .errors import Error
 from .as_proxy import (Events, make_ping_error, migrate_state_data, send_message_checkpoints,
@@ -33,9 +34,15 @@ from .as_proxy import (Events, make_ping_error, migrate_state_data, send_message
 from .as_queue import AppServiceQueue, QueueWaiterOverridden
 from .websocket_util import WebsocketHandler
 
-SEND_TIMEOUT = 20
+# Response timeout when sending an event via websocket for the first time.
+FIRST_SEND_TIMEOUT = 5
+# Response timeout when retrying sends.
+RETRY_SEND_TIMEOUT = 30
 # Allow client to not respond for ~3 minutes before websocket is disconnected
-TIMEOUT_COUNT_LIMIT = 10
+TIMEOUT_COUNT_LIMIT = 7
+# Minimum number of seconds between wakeup pushes
+MIN_WAKEUP_PUSH_DELAY = 5 * 60
+
 WS_CLOSE_REPLACED = 4001
 WS_NOT_ACKNOWLEDGED = 4002
 CONNECTED_WEBSOCKETS = Gauge("asmux_connected_websockets",
@@ -52,6 +59,7 @@ class AppServiceWebsocketHandler:
     log: TraceLogger = logging.getLogger("mau.api.as_websocket")
     websockets: dict[UUID, WebsocketHandler]
     queues: dict[UUID, AppServiceQueue]
+    prev_wakeup_push: dict[UUID, float]
     remote_status_endpoint: Optional[str]
     bridge_status_endpoint: Optional[str]
     sync_proxy: Optional[URL]
@@ -78,6 +86,7 @@ class AppServiceWebsocketHandler:
         self.mxid_suffix = mxid_suffix
         self.websockets = {}
         self.queues = {}
+        self.prev_wakeup_push = {}
         self.requests = {}
         self._stopping = False
         self.checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
@@ -180,10 +189,11 @@ class AppServiceWebsocketHandler:
         ws = WebsocketHandler(type_name="Websocket transaction connection",
                               proto="fi.mau.as_sync", version=proto_version,
                               log=self.log.getChild(az.name).getChild(identifier))
-        ws.set_handler("bridge_status", lambda handler, data: self.send_remote_status(az, data))
+        ws.set_handler("bridge_status", lambda _, data: self.send_remote_status(az, data))
         ws.set_handler("message_checkpoint",
-                       lambda handler, data: send_message_checkpoints(self, az, data))
-        ws.set_handler("start_sync", lambda handler, data: self.start_sync_proxy(az, data))
+                       lambda _, data: send_message_checkpoints(self, az, data))
+        ws.set_handler("push_key", lambda _, data: az.set_push_key(PushKey.deserialize(data)))
+        ws.set_handler("start_sync", lambda _, data: self.start_sync_proxy(az, data))
         ws.set_handler("ping", self.ping_server)
         await ws.prepare(req)
         try:
@@ -217,13 +227,14 @@ class AppServiceWebsocketHandler:
         for type in txn.types:
             metric.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
 
-    async def _send_next_txn(self, az: AppService, ws: WebsocketHandler, txn: Events) -> None:
+    async def _send_next_txn(self, az: AppService, ws: WebsocketHandler, txn: Events,
+                             timeout: int) -> None:
         ws.log.debug(f"Sending transaction {txn.txn_id} to {az.name} via websocket")
         data = {"status": "ok", "txn_id": txn.txn_id, **txn.serialize()}
         if ws.proto >= 3:
             await asyncio.wait_for(
                 ws.request("transaction", top_level_data=data, raise_errors=True),
-                timeout=SEND_TIMEOUT
+                timeout=FIRST_SEND_TIMEOUT
             )
         elif ws.proto >= 2:
             # Legacy protocol where client can't handle duplicate transactions properly,
@@ -231,11 +242,11 @@ class AppServiceWebsocketHandler:
             try:
                 await asyncio.wait_for(
                     ws.request("transaction", top_level_data=data, raise_errors=True),
-                    timeout=SEND_TIMEOUT
+                    timeout=RETRY_SEND_TIMEOUT
                 )
             except asyncio.TimeoutError:
                 ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
-                               f"didn't get response within {SEND_TIMEOUT} seconds"
+                               f"didn't get response within {RETRY_SEND_TIMEOUT} seconds"
                                f" -- legacy protocol, dropping transaction")
                 ws.timeouts += 1
                 self._send_metrics(az, txn, FAILED_EVENTS)
@@ -275,20 +286,23 @@ class AppServiceWebsocketHandler:
 
     async def _consume_queue_one(self, az: AppService, ws: WebsocketHandler, queue: AppServiceQueue
                                  ) -> None:
+        expired = queue.pop_expired_pdu()
+        if expired:
+            asyncio.create_task(self.report_expired_pdu(az, expired))
+        timeout = FIRST_SEND_TIMEOUT if ws.timeouts == 0 else RETRY_SEND_TIMEOUT
         try:
-            expired = queue.pop_expired_pdu()
-            if expired:
-                asyncio.create_task(self.report_expired_pdu(az, expired))
             async with queue.next() as txn:
-                await self._send_next_txn(az, ws, txn)
+                await self._send_next_txn(az, ws, txn, timeout)
         except asyncio.TimeoutError:
             ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
-                           f"didn't get response within {SEND_TIMEOUT} seconds")
+                           f"didn't get response within {timeout} seconds")
             ws.timeouts += 1
             if ws.timeouts >= TIMEOUT_COUNT_LIMIT:
                 asyncio.create_task(ws.close(code=WS_NOT_ACKNOWLEDGED,
                                              status="transactions_not_acknowledged"))
                 return
+            elif queue.contains_pdus and self.should_wakeup(az):
+                await self.wakeup_appservice(az)
         except QueueWaiterOverridden:
             self.log.exception("Got an unexpected QueueWaiterOverridden, exiting consumer")
             raise
@@ -308,8 +322,45 @@ class AppServiceWebsocketHandler:
         finally:
             queue.stop_consuming(consumer_id)
 
-    async def queue_events(self, az: AppService, events: Events) -> None:
+    def should_wakeup(self, az: AppService, only_if_no_websocket: bool = False) -> bool:
+        if not az.push_key:
+            return False
+        now = time.time()
+        try:
+            ws = self.websockets[az.id]
+        except KeyError:
+            pass
+        else:
+            if only_if_no_websocket:
+                return False
+            elif ws.last_received + RETRY_SEND_TIMEOUT > now:
+                return False
+        if self.prev_wakeup_push.get(az.id, 0) + MIN_WAKEUP_PUSH_DELAY > now:
+            return False
+        self.prev_wakeup_push[az.id] = time.time()
+        return True
+
+    async def wakeup_appservice(self, az: AppService) -> None:
+        try:
+            self.log.debug(f"Trying to wake up {az.name} via Sygnal push")
+            async with az.push_key.push() as resp:
+                if not 200 <= resp.status < 300:
+                    text = await resp.text()
+                    text = text.replace("\n", "\\n")
+                    self.log.warning(f"Unexpected status code {resp.status} "
+                                     f"trying to wake up {az.name}: {text}")
+                else:
+                    data = await resp.json()
+                    if az.push_key.pushkey in data.get("rejected", {}):
+                        self.log.warning(f"Sygnal rejected wakeup push for {az.name}")
+                        await az.set_push_key(None)
+        except Exception as e:
+            self.log.warning(f"Failed to send wakeup push for {az.name}: {e}")
+
+    def queue_events(self, az: AppService, events: Events) -> None:
         self._get_queue(az).push(events)
+        if events.pdu and self.should_wakeup(az, only_if_no_websocket=True):
+            asyncio.create_task(self.wakeup_appservice(az))
 
     async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
         try:
@@ -322,7 +373,7 @@ class AppServiceWebsocketHandler:
         try:
             if ws.proto >= 2:
                 await asyncio.wait_for(ws.request("syncproxy_error", txn_id=txn_id, **data),
-                                       timeout=SEND_TIMEOUT)
+                                       timeout=RETRY_SEND_TIMEOUT)
             else:
                 # Legacy API where client doesn't send acknowledgements
                 await ws.send(raise_errors=True, command="transaction", **data)

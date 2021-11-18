@@ -226,7 +226,7 @@ class AppServiceProxy(AppServiceServerMixin):
             asyncio.create_task(self.send_message_send_checkpoints(az, events))
             if not az.push:
                 self.log.trace(f"Queueing {events.txn_id} to {az.name}")
-                await self.server.as_websocket.queue_events(az, events)
+                self.server.as_websocket.queue_events(az, events)
                 return "ok"
             elif not az.address:
                 self.log.warning(f"Not sending transaction {events.txn_id} to {az.name}: "

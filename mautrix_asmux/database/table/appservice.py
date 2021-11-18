@@ -12,6 +12,7 @@ import math
 from attr import dataclass
 import asyncpg
 
+from ...sygnal import PushKey
 from .base import Base
 from .user import User
 
@@ -29,12 +30,17 @@ class AppService(Base):
     push: bool
     config_password_hash: Optional[bytes] = None
     config_password_expiry: Optional[int] = None
+    push_key: Optional[PushKey] = None
 
     login_token: Optional[str] = None
     created_: bool = False
 
     cache_by_id: ClassVar[Dict[UUID, 'AppService']] = {}
     cache_by_owner: ClassVar[Dict[Tuple[str, str], 'AppService']] = {}
+
+    def __attrs_post_init__(self) -> None:
+        if self.push_key and isinstance(self.push_key, str):
+            self.push_key = PushKey.parse_json(self.push_key)
 
     @property
     def name(self) -> str:
@@ -99,7 +105,7 @@ class AppService(Base):
                 # The input AS token also contains the UUID, so we want this to be a bit shorter
                 as_token = secrets.token_urlsafe(20)
                 az = AppService(id=uuid, owner=user.id, prefix=prefix, bot=bot, address=address,
-                                hs_token=hs_token, as_token=as_token, push=push,
+                                hs_token=hs_token, as_token=as_token, push=push, push_key=None,
                                 login_token=user.login_token)
                 az.created_ = True
                 await az.insert(conn=conn)
@@ -111,7 +117,7 @@ class AppService(Base):
         conn = conn or cls.db
         rows = await conn.fetch('SELECT appservice.id, owner, prefix, bot, address, hs_token,'
                                 '       as_token, push, "user".login_token, '
-                                '       config_password_hash, config_password_expiry '
+                                '       config_password_hash, config_password_expiry, push_key '
                                 'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                 'WHERE appservice.id = ANY($1::uuid[])', ids)
         return (AppService(**row)._add_to_cache() for row in rows)
@@ -160,6 +166,11 @@ class AppService(Base):
                    if self.config_password_expiry is not None
                    else False)
         return correct and not expired
+
+    async def set_push_key(self, push_key: Optional[PushKey]) -> None:
+        self.push_key = push_key
+        await self.db.execute("UPDATE appservice SET push_key=$2 WHERE id=$1",
+                              self.id, self.push_key.serialize() if self.push_key else None)
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db

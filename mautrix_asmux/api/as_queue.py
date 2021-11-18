@@ -108,6 +108,10 @@ class AppServiceQueue:
     def is_empty(self) -> bool:
         return self._next_txn is None and self._current_txn is None
 
+    @property
+    def contains_pdus(self) -> bool:
+        return bool(self._current_txn.pdu or self._next_txn.pdu)
+
     def pop_expired_pdu(self) -> List[JSON]:
         expired = []
         if self._current_txn is not None:

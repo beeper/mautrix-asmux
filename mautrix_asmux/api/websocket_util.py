@@ -4,6 +4,7 @@ from typing import Dict, Optional, Any, Callable, Awaitable, Union
 import logging
 import asyncio
 import json
+import time
 
 from aiohttp import web
 from aiohttp.http import WSMessage, WSMsgType, WSCloseCode
@@ -26,6 +27,7 @@ class WebsocketHandler:
     proto: int
     timeouts: int
     queue_task: Optional[asyncio.Task]
+    last_received: float
 
     def __init__(self, type_name: str, log: logging.Logger, proto: str, version: int) -> None:
         self.type_name = type_name
@@ -37,6 +39,7 @@ class WebsocketHandler:
         self._request_waiters = {}
         self._command_handlers = {}
         self.queue_task = None
+        self.last_received = 0.0
 
     @property
     def response(self) -> web.WebSocketResponse:
@@ -149,6 +152,7 @@ class WebsocketHandler:
             self.log.debug(f"{self.type_name} opened (proto: {self.proto})")
             msg: WSMessage
             async for msg in self._ws:
+                self.last_received = time.time()
                 if msg.type == WSMsgType.ERROR:
                     self.log.error(f"Error in websocket connection", exc_info=self._ws.exception())
                     break
