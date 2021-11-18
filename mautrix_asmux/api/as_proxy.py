@@ -1,12 +1,11 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Any, Awaitable, TYPE_CHECKING
+from typing import Optional, Any, Awaitable, Union, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
 import asyncio
 import time
-from aiohttp.client import ClientTimeout
 
 from attr import dataclass
 from aiohttp import web
@@ -23,15 +22,17 @@ from mautrix.util.message_send_checkpoint import (
     MessageSendCheckpointReportedBy,
     MessageSendCheckpointStatus,
     MessageSendCheckpointStep,
+    CHECKPOINT_TYPES,
 )
 
 from ..database import Room, AppService
 from ..segment import track_events
-from ..util import BRIDGE_DOUBLE_PUPPET_INDICATORS
+from ..util import is_double_puppeted
 from .errors import Error
 
 if TYPE_CHECKING:
     from ..server import MuxServer
+    from .as_websocket import AppServiceWebsocketHandler
 
 BridgeState.default_source = "asmux"
 BridgeState.human_readable_errors.update({
@@ -68,6 +69,21 @@ def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> dict
             },
         }
     return raw_pong
+
+
+async def send_message_checkpoints(self: Union['AppServiceProxy', 'AppServiceWebsocketHandler'],
+                                   az: AppService, data: JSON) -> None:
+    url = f"{self.checkpoint_url}/bridgebox/{az.owner}/bridge/{az.prefix}/send_message_metrics"
+    headers = {"Authorization": f"Bearer {az.real_as_token}"}
+    try:
+        async with self.api_server_sess.post(url, json=data, headers=headers) as resp:
+            if not 200 <= resp.status < 300:
+                text = await resp.text()
+                text = text.replace("\n", "\\n")
+                self.log.warning(f"Unexpected status code {resp.status} sending message send"
+                                 f" checkpoints for {az.name}: {text}")
+    except Exception as e:
+        self.log.warning(f"Failed to send message send checkpoints for {az.name}: {e}")
 
 
 @dataclass
@@ -116,6 +132,8 @@ class AppServiceProxy(AppServiceServerMixin):
     mxid_prefix: str
     mxid_suffix: str
     locks: dict[UUID, asyncio.Lock]
+    checkpoint_url: str
+    api_server_sess: aiohttp.ClientSession
 
     def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_token: str,
                  message_send_checkpoint_endpoint: str, http: aiohttp.ClientSession) -> None:
@@ -126,51 +144,25 @@ class AppServiceProxy(AppServiceServerMixin):
         self.hs_token = hs_token
         self.http = http
         self.locks = defaultdict(lambda: asyncio.Lock())
-        self.message_send_checkpoint_endpoint = message_send_checkpoint_endpoint
+        self.checkpoint_url = message_send_checkpoint_endpoint
+        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5))
 
-    # TODO maybe move the message send stuff to its own class later. Esp. if we end up adding a
-    # bunch of redis logic or something.
-    checkpoint_types = {
-        "m.room.redaction",
-        "m.room.message",
-        "m.room.encrypted",
-        "m.sticker",
-        "m.reaction",
-        "m.call.invite",
-        "m.call.candidates",
-        "m.call.select_answer",
-        "m.call.answer",
-        "m.call.hangup",
-        "m.call.reject",
-        "m.call.negotiate",
-    }
+    checkpoint_types = {str(evt_type) for evt_type in CHECKPOINT_TYPES}
 
-    def should_send_checkpoint(self, event) -> bool:
-        event_type = event.get("type")
-        if event_type not in self.checkpoint_types:
-            return False
+    def should_send_checkpoint(self, az: AppService, event: JSON) -> bool:
+        return (
+            event.get("type") in self.checkpoint_types
+            and event.get("sender") == f"@{az.owner}{self.mxid_suffix}"
+            and not is_double_puppeted(event)
+        )
 
-        if event.get("sender").startswith(self.mxid_prefix):
-            return False
-
-        content = event.get("content")
-        for bridge in BRIDGE_DOUBLE_PUPPET_INDICATORS:
-            if content.get(f"net.maunium.{bridge}.puppet", False):
-                return False
-        if content.get("source", None) in ("slack", "discord"):
-            return False
-
-        return True
-
-    async def send_message_send_checkpoints(self, appservice: AppService, events: Events):
-        if not self.message_send_checkpoint_endpoint:
+    async def send_message_send_checkpoints(self, az: AppService, events: Events):
+        if not self.checkpoint_url:
             return
-        username = appservice.owner
-        bridge = appservice.prefix
 
         checkpoints = []
         for event in events.pdu:
-            if not self.should_send_checkpoint(event):
+            if not self.should_send_checkpoint(az, event):
                 continue
 
             homeserver_checkpoint = MessageSendCheckpoint(
@@ -199,26 +191,8 @@ class AppServiceProxy(AppServiceServerMixin):
         if not checkpoints:
             return
 
-        self.log.debug(f"Sending message send checkpoints for {appservice.name} to API server.")
-
-        url = "{}/bridgebox/{}/bridge/{}/send_message_metrics".format(
-            self.message_send_checkpoint_endpoint, appservice.owner, appservice.prefix
-        )
-
-        try:
-            headers = {"Authorization": f"Bearer {appservice.real_as_token}"}
-            async with aiohttp.ClientSession() as sess, \
-                       sess.post(url, json={"checkpoints": checkpoints}, headers=headers,
-                                 timeout=ClientTimeout(5)) as resp:
-                if not 200 <= resp.status < 300:
-                    text = await resp.text()
-                    text = text.replace("\n", "\\n")
-                    self.log.warning(f"Unexpected status code {resp.status} sending message send"
-                                     f" checkpoints for {username}/{bridge}: {text}")
-        except Exception as e:
-            self.log.warning(
-                f"Failed to send message send checkpoints for {username}/{bridge}: {e}"
-            )
+        self.log.debug(f"Sending message send checkpoints for {az.name} to API server.")
+        await send_message_checkpoints(self, az, {"checkpoints": checkpoints})
 
     async def post_events(self, appservice: AppService, events: Events) -> str:
         async with self.locks[appservice.id]:
