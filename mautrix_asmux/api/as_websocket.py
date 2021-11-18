@@ -309,15 +309,14 @@ class AppServiceWebsocketHandler:
     async def queue_events(self, az: AppService, events: Events) -> None:
         self._get_queue(az).push(events)
 
-    async def post_syncproxy_error(self, appservice: AppService, txn_id: str, data: dict[str, Any]
-                                   ) -> str:
+    async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
         try:
-            ws = self.websockets[appservice.id]
+            ws = self.websockets[az.id]
         except KeyError:
-            self.log.warning(f"Not sending syncproxy error {txn_id} to {appservice.name}: "
+            self.log.warning(f"Not sending syncproxy error {txn_id} to {az.name}: "
                              f"websocket not connected")
             return "websocket-not-connected"
-        self.log.debug(f"Sending transaction {txn_id} to {appservice.name} via websocket")
+        self.log.debug(f"Sending transaction {txn_id} to {az.name} via websocket")
         try:
             if ws.proto >= 2:
                 await asyncio.wait_for(ws.request("syncproxy_error", txn_id=txn_id, **data),
@@ -332,9 +331,9 @@ class AppServiceWebsocketHandler:
             return "websocket-send-fail"
         return "ok"
 
-    async def ping(self, appservice: AppService) -> GlobalBridgeState:
+    async def ping(self, az: AppService) -> GlobalBridgeState:
         try:
-            ws = self.websockets[appservice.id]
+            ws = self.websockets[az.id]
         except KeyError:
             return make_ping_error("websocket-not-connected")
         try:
@@ -342,7 +341,6 @@ class AppServiceWebsocketHandler:
         except asyncio.TimeoutError:
             return make_ping_error("io-timeout")
         except Exception as e:
-            self.log.warning(f"Failed to ping {appservice.name} ({appservice.id}) via websocket",
-                             exc_info=True)
+            self.log.warning(f"Failed to ping {az.name} ({az.id}) via websocket", exc_info=True)
             return make_ping_error("websocket-fatal-error", message=str(e))
         return GlobalBridgeState.deserialize(migrate_state_data(raw_pong))

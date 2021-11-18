@@ -96,17 +96,16 @@ class AppServiceHTTPHandler:
         ]
         asyncio.create_task(send_message_checkpoints(self, az, {"checkpoints": checkpoints}))
 
-    async def post_syncproxy_error(self, appservice: AppService, txn_id: str, data: dict[str, Any]
-                                   ) -> str:
+    async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
         raise Error.syncproxy_error_not_supported
 
-    async def ping(self, appservice: AppService) -> GlobalBridgeState:
-        url = (URL(appservice.address) / "_matrix/app/com.beeper.bridge_state").with_query({
-            "user_id": f"@{appservice.owner}{self.mxid_suffix}",
+    async def ping(self, az: AppService) -> GlobalBridgeState:
+        url = (URL(az.address) / "_matrix/app/com.beeper.bridge_state").with_query({
+            "user_id": f"@{az.owner}{self.mxid_suffix}",
             # TODO remove after making sure it's safe to remove
             "remote_id": "",
         })
-        headers = {"Authorization": f"Bearer {appservice.hs_token}"}
+        headers = {"Authorization": f"Bearer {az.hs_token}"}
         try:
             resp = await self.http.post(url, headers=headers, timeout=ClientTimeout(total=45))
         except asyncio.TimeoutError:
@@ -114,8 +113,7 @@ class AppServiceHTTPHandler:
         except ClientError as e:
             return make_ping_error("http-connection-error", message=str(e))
         except Exception as e:
-            self.log.warning(f"Failed to ping {appservice.name} ({appservice.id}) via HTTP",
-                             exc_info=True)
+            self.log.warning(f"Failed to ping {az.name} ({az.id}) via HTTP", exc_info=True)
             return make_ping_error("http-fatal-error", message=str(e))
         try:
             raw_pong = await resp.json()

@@ -216,34 +216,32 @@ class AppServiceProxy(AppServiceServerMixin):
         self.log.debug(f"Sending message send checkpoints for {az.name} to API server.")
         await send_message_checkpoints(self, az, {"checkpoints": checkpoints})
 
-    async def post_events(self, appservice: AppService, events: Events) -> str:
-        async with self.locks[appservice.id]:
+    async def post_events(self, az: AppService, events: Events) -> str:
+        async with self.locks[az.id]:
             for type in events.types:
-                ACCEPTED_EVENTS.labels(owner=appservice.owner, bridge=appservice.prefix,
-                                       type=type).inc()
+                ACCEPTED_EVENTS.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
 
-            asyncio.create_task(self.send_message_send_checkpoints(appservice, events))
-            if not appservice.push:
-                self.log.trace(f"Queueing {events.txn_id} to {appservice.name}")
-                await self.server.as_websocket.queue_events(appservice, events)
+            asyncio.create_task(self.send_message_send_checkpoints(az, events))
+            if not az.push:
+                self.log.trace(f"Queueing {events.txn_id} to {az.name}")
+                await self.server.as_websocket.queue_events(az, events)
                 return "ok"
-            elif not appservice.address:
-                self.log.warning(f"Not sending transaction {events.txn_id} "
-                                 f"to {appservice.name}: no address configured")
+            elif not az.address:
+                self.log.warning(f"Not sending transaction {events.txn_id} to {az.name}: "
+                                 f"no address configured")
                 return "no-address"
             try:
-                self.log.trace("Sending transaction to %s: %s", appservice.name, events)
-                status = await self.server.as_http.post_events(appservice, events)
+                self.log.trace("Sending transaction to %s: %s", az.name, events)
+                status = await self.server.as_http.post_events(az, events)
             except Exception:
-                self.log.exception(f"Fatal error sending transaction {events.txn_id} "
-                                   f"to {appservice.name}")
+                self.log.exception(f"Fatal error sending transaction {events.txn_id} to {az.name}")
                 status = "fatal-error"
             if status == "ok":
-                self.log.debug(f"Successfully sent {events.txn_id} to {appservice.name}")
-                asyncio.create_task(track_events(appservice, events))
+                self.log.debug(f"Successfully sent {events.txn_id} to {az.name}")
+                asyncio.create_task(track_events(az, events))
             metric = SUCCESSFUL_EVENTS if status == "ok" else FAILED_EVENTS
             for type in events.types:
-                metric.labels(owner=appservice.owner, bridge=appservice.prefix, type=type).inc()
+                metric.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
             return status
 
     async def ping(self, az: AppService) -> GlobalBridgeState:
