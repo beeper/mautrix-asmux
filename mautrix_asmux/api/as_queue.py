@@ -39,7 +39,7 @@ class AppServiceQueue:
         self.owner = f"@{self.az.owner}{ws.mxid_suffix}"
         self.loop = asyncio.get_running_loop()
         self.max_pdu_age_ms = 3 * 60 * 1000
-        self.cleanup_interval = 60
+        self.cleanup_interval = 15
         self._next_txn = None
         self._current_txn = None
         self._txn_waiter = None
