@@ -37,15 +37,17 @@ class MuxServer:
 
         self.http = http
 
+        checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
         self.as_proxy = AppServiceProxy(
             server=self,
             mxid_prefix=mxid_prefix,
             mxid_suffix=mxid_suffix,
             hs_token=config["appservice.hs_token"],
-            message_send_checkpoint_endpoint=config["mux.message_send_checkpoint_endpoint"],
+            checkpoint_url=checkpoint_url,
             http=self.http,
         )
-        self.as_http = AppServiceHTTPHandler(mxid_suffix=mxid_suffix, http=self.http)
+        self.as_http = AppServiceHTTPHandler(mxid_suffix=mxid_suffix, http=self.http,
+                                             checkpoint_url=checkpoint_url)
         self.as_websocket = AppServiceWebsocketHandler(config=config, mxid_prefix=mxid_prefix,
                                                        mxid_suffix=mxid_suffix)
         self.cs_proxy = ClientProxy(server=self, mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,

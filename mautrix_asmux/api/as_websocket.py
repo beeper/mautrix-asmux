@@ -261,7 +261,7 @@ class AppServiceWebsocketHandler:
                 event_id=evt.get("event_id"),
                 room_id=evt.get("room_id"),
                 step=MessageSendCheckpointStep.BRIDGE,
-                timestamp=evt.get("origin_server_ts"),
+                timestamp=int(time.time() * 1000),
                 status=MessageSendCheckpointStatus.PERM_FAILURE,
                 event_type=evt.get("type"),
                 reported_by=MessageSendCheckpointReportedBy.ASMUX,
@@ -305,7 +305,6 @@ class AppServiceWebsocketHandler:
                 await self._consume_queue_one(az, ws, queue)
         finally:
             queue.stop_consuming(consumer_id)
-
 
     async def queue_events(self, az: AppService, events: Events) -> None:
         self._get_queue(az).push(events)

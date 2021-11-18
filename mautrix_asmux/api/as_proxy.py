@@ -33,6 +33,9 @@ from .errors import Error
 if TYPE_CHECKING:
     from ..server import MuxServer
     from .as_websocket import AppServiceWebsocketHandler
+    from .as_http import AppServiceHTTPHandler
+
+    CheckpointSender = Union['AppServiceProxy', AppServiceWebsocketHandler, AppServiceHTTPHandler]
 
 BridgeState.default_source = "asmux"
 BridgeState.human_readable_errors.update({
@@ -71,8 +74,7 @@ def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> dict
     return raw_pong
 
 
-async def send_message_checkpoints(self: Union['AppServiceProxy', 'AppServiceWebsocketHandler'],
-                                   az: AppService, data: JSON) -> None:
+async def send_message_checkpoints(self: 'CheckpointSender', az: AppService, data: JSON) -> None:
     url = f"{self.checkpoint_url}/bridgebox/{az.owner}/bridge/{az.prefix}/send_message_metrics"
     headers = {"Authorization": f"Bearer {az.real_as_token}"}
     try:
@@ -156,7 +158,7 @@ class AppServiceProxy(AppServiceServerMixin):
     api_server_sess: aiohttp.ClientSession
 
     def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_token: str,
-                 message_send_checkpoint_endpoint: str, http: aiohttp.ClientSession) -> None:
+                 checkpoint_url: str, http: aiohttp.ClientSession) -> None:
         super().__init__(ephemeral_events=True)
         self.server = server
         self.mxid_prefix = mxid_prefix
@@ -164,7 +166,7 @@ class AppServiceProxy(AppServiceServerMixin):
         self.hs_token = hs_token
         self.http = http
         self.locks = defaultdict(lambda: asyncio.Lock())
-        self.checkpoint_url = message_send_checkpoint_endpoint
+        self.checkpoint_url = checkpoint_url
         self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5))
 
     checkpoint_types = {str(evt_type) for evt_type in CHECKPOINT_TYPES}
