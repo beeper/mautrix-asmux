@@ -397,17 +397,11 @@ class AppServiceProxy(AppServiceServerMixin):
             try:
                 self.log.trace("Sending error transaction %s to %s: %s", outgoing_txn_id,
                                appservice.name, data)
-                if not appservice.push:
-                    status = await self.server.as_websocket.post_syncproxy_error(
-                        appservice, outgoing_txn_id, data)
-                elif appservice.address:
-                    status = await self.server.as_http.post_syncproxy_error(
-                        appservice, outgoing_txn_id, data)
-                else:
-                    self.log.warning(f"Not sending syncproxy error transaction {outgoing_txn_id} "
-                                     f"to {appservice.name}: no address configured")
+                if appservice.push:
                     raise Error.syncproxy_error_not_supported
-                sent_to[str(appservice_id)] = status
+                sent_to[str(appservice_id)] = await self.server.as_websocket.post_syncproxy_error(
+                    appservice, outgoing_txn_id, data
+                )
             except web.HTTPException:
                 raise
             except Exception:

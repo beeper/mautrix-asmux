@@ -96,9 +96,6 @@ class AppServiceHTTPHandler:
         ]
         asyncio.create_task(send_message_checkpoints(self, az, {"checkpoints": checkpoints}))
 
-    async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
-        raise Error.syncproxy_error_not_supported
-
     async def ping(self, az: AppService) -> GlobalBridgeState:
         url = (URL(az.address) / "_matrix/app/com.beeper.bridge_state").with_query({
             "user_id": f"@{az.owner}{self.mxid_suffix}",
