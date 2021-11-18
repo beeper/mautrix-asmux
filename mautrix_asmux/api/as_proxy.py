@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Any, Awaitable, Union, TYPE_CHECKING
+from typing import Optional, Any, Awaitable, Union, List, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
@@ -107,6 +107,26 @@ class Events:
         if self.device_lists.changed or self.device_lists.left:
             output["device_lists"] = self.device_lists.serialize()
         return output
+
+    @property
+    def is_empty(self) -> bool:
+        return (not self.pdu and not self.edu and not self.otk_count
+                and not self.device_lists.changed and not self.device_lists.left)
+
+    def pop_expired_pdu(self, owner: str, max_age: int) -> List[JSON]:
+        now = int(time.time() * 1000)
+        filtered = []
+        new_pdu = []
+        for evt in self.pdu:
+            if evt.get("sender") != owner or is_double_puppeted(evt):
+                continue
+            ts = evt.get("origin_server_ts", {})
+            if ts + max_age < now:
+                filtered.append(evt)
+            else:
+                new_pdu.append(evt)
+        self.pdu = new_pdu
+        return filtered
 
 
 RECEIVED_EVENTS = Counter("asmux_received_events", "Number of incoming events",

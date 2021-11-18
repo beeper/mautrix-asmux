@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Any, Dict, Union, Optional
+from typing import Any, Dict, Union, Optional, List
 from uuid import UUID
 import logging
 import asyncio
@@ -13,9 +13,14 @@ from aiohttp import web
 from aiohttp.http import WSCloseCode
 
 from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
+from mautrix.util.message_send_checkpoint import (
+    MessageSendCheckpoint, MessageSendCheckpointStep, MessageSendCheckpointReportedBy,
+    MessageSendCheckpointStatus
+)
 from mautrix.util.logging import TraceLogger
 from mautrix.util.opt_prometheus import Gauge, Counter
 from mautrix.errors import make_request_error, standard_error, MatrixStandardRequestError
+from mautrix.types import JSON
 
 from ..database import AppService
 from ..config import Config
@@ -58,6 +63,7 @@ class AppServiceWebsocketHandler:
     _stopping: bool
     checkpoint_url: str
     api_server_sess: aiohttp.ClientSession
+    sync_proxy_sess: aiohttp.ClientSession
 
     def __init__(self, config: Config, mxid_prefix: str, mxid_suffix: str) -> None:
         self.remote_status_endpoint = config["mux.remote_status_endpoint"]
@@ -75,6 +81,7 @@ class AppServiceWebsocketHandler:
         self._stopping = False
         self.checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
         self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
+        self.sync_proxy_sess = aiohttp.ClientSession()
 
     async def stop(self) -> None:
         self._stopping = True
@@ -138,8 +145,7 @@ class AppServiceWebsocketHandler:
         }
         self.log.debug(f"Requesting sync proxy start for {az.id}")
         self.log.trace("Sync proxy data: %s", req)
-        async with aiohttp.ClientSession() as sess, sess.put(url, json=req, headers=headers
-                                                             ) as resp:
+        async with self.sync_proxy_sess.put(url, json=req, headers=headers) as resp:
             return await self._get_response(resp)
 
     @staticmethod
@@ -151,7 +157,7 @@ class AppServiceWebsocketHandler:
         headers = {"Authorization": f"Bearer {self.sync_proxy_token}"}
         self.log.debug(f"Requesting sync proxy stop for {az.id}")
         try:
-            async with aiohttp.ClientSession() as sess, sess.delete(url, headers=headers) as resp:
+            async with self.sync_proxy_sess.delete(url, headers=headers) as resp:
                 await self._get_response(resp)
             self.log.debug(f"Stopped sync proxy for {az.id}")
         except SyncProxyNotActive as e:
@@ -240,39 +246,69 @@ class AppServiceWebsocketHandler:
         asyncio.create_task(track_events(az, txn))
         self._send_metrics(az, txn, SUCCESSFUL_EVENTS)
 
-    async def _consume_queue(self, az: AppService, ws: WebsocketHandler) -> None:
+    def _get_queue(self, az: AppService) -> AppServiceQueue:
         try:
             queue = self.queues[az.id]
         except KeyError:
-            queue = self.queues[az.id] = AppServiceQueue(az)
+            queue = self.queues[az.id] = AppServiceQueue(az, self)
+        return queue
+
+    async def report_expired_pdu(self, az: AppService, expired: List[JSON]) -> None:
+        if not expired:
+            return
+        checkpoints = [
+            MessageSendCheckpoint(
+                event_id=evt.get("event_id"),
+                room_id=evt.get("room_id"),
+                step=MessageSendCheckpointStep.BRIDGE,
+                timestamp=evt.get("origin_server_ts"),
+                status=MessageSendCheckpointStatus.PERM_FAILURE,
+                event_type=evt.get("type"),
+                reported_by=MessageSendCheckpointReportedBy.ASMUX,
+                info="dropped old event",
+            ).serialize()
+            for evt in expired
+        ]
+        await send_message_checkpoints(self, az, {"checkpoints": checkpoints})
+
+    async def _consume_queue_one(self, az: AppService, ws: WebsocketHandler, queue: AppServiceQueue
+                                 ) -> None:
+        try:
+            expired = queue.pop_expired_pdu()
+            if expired:
+                asyncio.create_task(self.report_expired_pdu(az, expired))
+            async with queue.next() as txn:
+                await self._send_next_txn(az, ws, txn)
+        except asyncio.TimeoutError:
+            ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
+                           f"didn't get response within {SEND_TIMEOUT} seconds")
+            ws.timeouts += 1
+            if ws.timeouts >= TIMEOUT_COUNT_LIMIT:
+                asyncio.create_task(ws.close(code=WS_NOT_ACKNOWLEDGED,
+                                             status="transactions_not_acknowledged"))
+                return
+        except QueueWaiterOverridden:
+            self.log.exception("Got an unexpected QueueWaiterOverridden, exiting consumer")
+            raise
+        except Exception as e:
+            ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: {type(e).__name__} {e}")
+        except asyncio.CancelledError:
+            ws.log.debug("Queue consumer cancelled")
+            raise
+
+    async def _consume_queue(self, az: AppService, ws: WebsocketHandler) -> None:
+        queue = self._get_queue(az)
         ws.log.debug("Started consuming events from queue")
-        while True:
-            try:
-                async with queue.next() as txn:
-                    await self._send_next_txn(az, ws, txn)
-            except asyncio.TimeoutError:
-                ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
-                               f"didn't get response within {SEND_TIMEOUT} seconds")
-                ws.timeouts += 1
-                if ws.timeouts >= TIMEOUT_COUNT_LIMIT:
-                    asyncio.create_task(ws.close(code=WS_NOT_ACKNOWLEDGED,
-                                                 status="transactions_not_acknowledged"))
-                    return
-            except QueueWaiterOverridden:
-                self.log.exception("Got an unexpected QueueWaiterOverridden, exiting consumer")
-                raise
-            except Exception as e:
-                ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: {type(e).__name__} {e}")
-            except asyncio.CancelledError:
-                ws.log.debug("Queue consumer cancelled")
-                raise
+        consumer_id = queue.start_consuming()
+        try:
+            while True:
+                await self._consume_queue_one(az, ws, queue)
+        finally:
+            queue.stop_consuming(consumer_id)
+
 
     async def queue_events(self, az: AppService, events: Events) -> None:
-        try:
-            queue = self.queues[az.id]
-        except KeyError:
-            queue = self.queues[az.id] = AppServiceQueue(az)
-        queue.push(events)
+        self._get_queue(az).push(events)
 
     async def post_syncproxy_error(self, appservice: AppService, txn_id: str, data: dict[str, Any]
                                    ) -> str:
