@@ -2,12 +2,13 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import Any, ClassVar, Optional, AsyncIterator
 from contextlib import asynccontextmanager
+import time
 
 import aiohttp
 from attr import dataclass
 
 from mautrix.api import HTTPAPI
-from mautrix.types import SerializableAttrs
+from mautrix.types import SerializableAttrs, field
 
 
 @dataclass
@@ -17,8 +18,8 @@ class PushKey(SerializableAttrs):
     url: str
     app_id: str
     pushkey: str
-    pushkey_ts: int
-    data: dict[str, Any]
+    pushkey_ts: int = field(factory=lambda: int(time.time() * 1000))
+    data: dict[str, Any] = field(factory=lambda: {})
 
     @asynccontextmanager
     async def push(self, **data: Any) -> AsyncIterator[aiohttp.ClientResponse]:

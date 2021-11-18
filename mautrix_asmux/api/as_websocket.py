@@ -41,7 +41,7 @@ RETRY_SEND_TIMEOUT = 30
 # Allow client to not respond for ~3 minutes before websocket is disconnected
 TIMEOUT_COUNT_LIMIT = 7
 # Minimum number of seconds between wakeup pushes
-MIN_WAKEUP_PUSH_DELAY = 5 * 60
+MIN_WAKEUP_PUSH_DELAY = 10 * 60
 
 WS_CLOSE_REPLACED = 4001
 WS_NOT_ACKNOWLEDGED = 4002
@@ -234,7 +234,7 @@ class AppServiceWebsocketHandler:
         if ws.proto >= 3:
             await asyncio.wait_for(
                 ws.request("transaction", top_level_data=data, raise_errors=True),
-                timeout=FIRST_SEND_TIMEOUT
+                timeout=timeout,
             )
         elif ws.proto >= 2:
             # Legacy protocol where client can't handle duplicate transactions properly,
@@ -319,6 +319,8 @@ class AppServiceWebsocketHandler:
         try:
             while True:
                 await self._consume_queue_one(az, ws, queue)
+        except Exception:
+            self.log.exception("Fatal error in queue consumer")
         finally:
             queue.stop_consuming(consumer_id)
 
@@ -331,7 +333,7 @@ class AppServiceWebsocketHandler:
         except KeyError:
             pass
         else:
-            if only_if_no_websocket:
+            if only_if_no_websocket and ws.timeouts == 0:
                 return False
             elif ws.last_received + RETRY_SEND_TIMEOUT > now:
                 return False
@@ -343,17 +345,25 @@ class AppServiceWebsocketHandler:
     async def wakeup_appservice(self, az: AppService) -> None:
         try:
             self.log.debug(f"Trying to wake up {az.name} via Sygnal push")
-            async with az.push_key.push() as resp:
+            resp: aiohttp.ClientResponse
+            async with az.push_key.push(type="com.beeper.asmux.websocket_wakeup") as resp:
                 if not 200 <= resp.status < 300:
                     text = await resp.text()
                     text = text.replace("\n", "\\n")
                     self.log.warning(f"Unexpected status code {resp.status} "
                                      f"trying to wake up {az.name}: {text}")
                 else:
-                    data = await resp.json()
-                    if az.push_key.pushkey in data.get("rejected", {}):
-                        self.log.warning(f"Sygnal rejected wakeup push for {az.name}")
-                        await az.set_push_key(None)
+                    try:
+                        data = await resp.json(content_type=None)
+                    except json.JSONDecodeError:
+                        text = await resp.text()
+                        text = text.replace("\n", "\\n")
+                        self.log.warning(f"Unexpected response trying to wake up {az.name}: "
+                                         f"{text}")
+                    else:
+                        if az.push_key.pushkey in data.get("rejected", {}):
+                            self.log.warning(f"Sygnal rejected wakeup push for {az.name}")
+                            await az.set_push_key(None)
         except Exception as e:
             self.log.warning(f"Failed to send wakeup push for {az.name}: {e}")
 

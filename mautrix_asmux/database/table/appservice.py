@@ -69,7 +69,7 @@ class AppService(Base):
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, '
                                   '       hs_token, as_token, push, "user".login_token, '
-                                  '       config_password_hash, config_password_expiry '
+                                  '       config_password_hash, config_password_expiry, push_key '
                                   'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                   'WHERE appservice.id=$1::uuid', id)
         return AppService(**row)._add_to_cache() if row else None
@@ -84,7 +84,7 @@ class AppService(Base):
         conn = conn or cls.db
         row = await conn.fetchrow('SELECT appservice.id, owner, prefix, bot, address, hs_token, '
                                   '       as_token, push, "user".login_token, '
-                                  '       config_password_hash, config_password_expiry '
+                                  '       config_password_hash, config_password_expiry, push_key '
                                   'FROM appservice JOIN "user" ON "user".id=appservice.owner '
                                   'WHERE owner=$1 AND prefix=$2 ',
                                   owner, prefix)
@@ -168,9 +168,11 @@ class AppService(Base):
         return correct and not expired
 
     async def set_push_key(self, push_key: Optional[PushKey]) -> None:
+        if push_key and not push_key.pushkey:
+            push_key = None
         self.push_key = push_key
         await self.db.execute("UPDATE appservice SET push_key=$2 WHERE id=$1",
-                              self.id, self.push_key.serialize() if self.push_key else None)
+                              self.id, self.push_key.json() if self.push_key else None)
 
     async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db

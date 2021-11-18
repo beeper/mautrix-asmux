@@ -14,7 +14,8 @@ CommandHandler = Callable[['WebsocketHandler', Data], Awaitable[Optional[Data]]]
 
 
 class WebsocketClosedError(Exception):
-    pass
+    def __init__(self) -> None:
+        super().__init__("Websocket closed before response received")
 
 
 class WebsocketHandler:
@@ -62,8 +63,9 @@ class WebsocketHandler:
                 await self.send(command="response", id=req_id, data=resp)
 
     def _clear_request_waiters(self) -> None:
-        for waiter in self._request_waiters.values():
-            waiter.set_exception(WebsocketClosedError("Websocket closed before response received"))
+        for req_id, waiter in self._request_waiters.items():
+            if not waiter.done():
+                waiter.set_exception(WebsocketClosedError())
         self._request_waiters = {}
 
     def _handle_text(self, msg: WSMessage) -> None:
@@ -137,11 +139,12 @@ class WebsocketHandler:
                 raise
 
     async def request(self, command: str, *, top_level_data: Optional[Dict[str, Any]] = None,
-                      **kwargs: Any) -> Optional[Data]:
+                      raise_errors: bool = False, **kwargs: Any) -> Optional[Data]:
         self._prev_req_id += 1
         req_id = self._prev_req_id
         self._request_waiters[req_id] = fut = asyncio.get_running_loop().create_future()
-        await self.send(command=command, id=req_id, data=kwargs, **(top_level_data or {}))
+        await self.send(command=command, id=req_id, raise_errors=raise_errors, data=kwargs,
+                        **(top_level_data or {}))
         return await fut
 
     def prepare(self, req: web.Request) -> Awaitable[None]:

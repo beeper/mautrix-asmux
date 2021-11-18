@@ -110,7 +110,8 @@ class AppServiceQueue:
 
     @property
     def contains_pdus(self) -> bool:
-        return bool(self._current_txn.pdu or self._next_txn.pdu)
+        return bool((self._current_txn and self._current_txn.pdu)
+                    or (self._next_txn and self._next_txn.pdu))
 
     def pop_expired_pdu(self) -> List[JSON]:
         expired = []
