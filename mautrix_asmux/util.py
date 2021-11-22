@@ -7,7 +7,6 @@ BRIDGE_DOUBLE_PUPPET_INDICATORS = (
     "hangouts",
     "imessage",
     "instagram",
-    "linkedin",
     "signal",
     "telegram",
     "twitter",
@@ -17,6 +16,8 @@ BRIDGE_DOUBLE_PUPPET_INDICATORS = (
 
 def is_double_puppeted(event: JSON) -> bool:
     content = event.get("content")
+    if content.get("com.beeper.linkedin.puppet", False):
+        return False
     for bridge in BRIDGE_DOUBLE_PUPPET_INDICATORS:
         if content.get(f"net.maunium.{bridge}.puppet", False):
             return False
