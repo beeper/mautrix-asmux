@@ -40,8 +40,10 @@ FIRST_SEND_TIMEOUT = 5
 RETRY_SEND_TIMEOUT = 30
 # Allow client to not respond for ~3 minutes before websocket is disconnected
 TIMEOUT_COUNT_LIMIT = 7
-# Minimum number of seconds between wakeup pushes
-MIN_WAKEUP_PUSH_DELAY = 10 * 60
+# Minimum number of seconds between all wakeup pushes
+MIN_WAKEUP_PUSH_DELAY = 3
+# Minimum delay since last websocket data before pre-emptively making a wakeup push on new message
+PREEMPTIVE_WAKEUP_PUSH_DELAY = 10 * 60
 
 WS_CLOSE_REPLACED = 4001
 WS_NOT_ACKNOWLEDGED = 4002
@@ -289,6 +291,12 @@ class AppServiceWebsocketHandler:
         expired = queue.pop_expired_pdu()
         if expired:
             asyncio.create_task(self.report_expired_pdu(az, expired))
+        if queue.contains_pdus and self.should_wakeup(
+            az,
+            min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
+            min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
+        ):
+            asyncio.create_task(self.wakeup_appservice(az))
         timeout = FIRST_SEND_TIMEOUT if ws.timeouts == 0 else RETRY_SEND_TIMEOUT
         try:
             async with queue.next() as txn:
@@ -324,7 +332,9 @@ class AppServiceWebsocketHandler:
         finally:
             queue.stop_consuming(consumer_id)
 
-    def should_wakeup(self, az: AppService, only_if_no_websocket: bool = False) -> bool:
+    def should_wakeup(self, az: AppService, only_if_ws_timeout: bool = False,
+                      min_time_since_last_push: int = MIN_WAKEUP_PUSH_DELAY,
+                      min_time_since_ws_message: int = RETRY_SEND_TIMEOUT) -> bool:
         if not az.push_key:
             return False
         now = time.time()
@@ -333,11 +343,11 @@ class AppServiceWebsocketHandler:
         except KeyError:
             pass
         else:
-            if only_if_no_websocket and ws.timeouts == 0:
+            if only_if_ws_timeout and ws.timeouts == 0:
                 return False
-            elif ws.last_received + RETRY_SEND_TIMEOUT > now:
+            elif ws.last_received + min_time_since_ws_message > now:
                 return False
-        if self.prev_wakeup_push.get(az.id, 0) + MIN_WAKEUP_PUSH_DELAY > now:
+        if self.prev_wakeup_push.get(az.id, 0) + min_time_since_last_push > now:
             return False
         self.prev_wakeup_push[az.id] = time.time()
         return True
@@ -364,12 +374,14 @@ class AppServiceWebsocketHandler:
                         if az.push_key.pushkey in data.get("rejected", {}):
                             self.log.warning(f"Sygnal rejected wakeup push for {az.name}")
                             await az.set_push_key(None)
+                        else:
+                            self.log.debug(f"Sygnal didn't report errors waking up {az.name}")
         except Exception as e:
             self.log.warning(f"Failed to send wakeup push for {az.name}: {e}")
 
     def queue_events(self, az: AppService, events: Events) -> None:
         self._get_queue(az).push(events)
-        if events.pdu and self.should_wakeup(az, only_if_no_websocket=True):
+        if events.pdu and self.should_wakeup(az, only_if_ws_timeout=True):
             asyncio.create_task(self.wakeup_appservice(az))
 
     async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
