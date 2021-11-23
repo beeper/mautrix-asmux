@@ -133,6 +133,16 @@ class AppServiceWebsocketHandler:
         )
 
     def send_bridge_unreachable_status(self, az: AppService) -> None:
+        # If we've lost the websocket, we won't be able to send events from matrix to the
+        # bridge anymore. Let the api-server know so it can let the user know.
+
+        # androidsms should not do this, as the websocket is not necessary for
+        # connectivity, as we send a push notification to the app every time it should
+        # do something with the websocket. This means there's no loss of functionality
+        # when the websocket goes down, so we should not notify the user.
+        if az.prefix == "androidsms":
+            return
+
         async def check_and_send_bridge_unreachable_status() -> None:
             # Wait a bit before reporting unreachable, we might reconnect right away
             await asyncio.sleep(30)
