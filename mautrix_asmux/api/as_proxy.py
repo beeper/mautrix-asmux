@@ -23,12 +23,11 @@ from mautrix.util.message_send_checkpoint import (
     MessageSendCheckpointReportedBy,
     MessageSendCheckpointStatus,
     MessageSendCheckpointStep,
-    CHECKPOINT_TYPES,
 )
 
 from ..database import Room, AppService
 from ..segment import track_events
-from ..util import is_double_puppeted
+from ..util import should_send_checkpoint, is_double_puppeted
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -171,22 +170,13 @@ class AppServiceProxy(AppServiceServerMixin):
         self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5),
                                                      headers={"User-Agent": HTTPAPI.default_ua})
 
-    checkpoint_types = {str(evt_type) for evt_type in CHECKPOINT_TYPES}
-
-    def should_send_checkpoint(self, az: AppService, event: JSON) -> bool:
-        return (
-            event.get("type") in self.checkpoint_types
-            and event.get("sender") == f"@{az.owner}{self.mxid_suffix}"
-            and not is_double_puppeted(event)
-        )
-
     async def send_message_send_checkpoints(self, az: AppService, events: Events):
         if not self.checkpoint_url:
             return
 
         checkpoints = []
         for event in events.pdu:
-            if not self.should_send_checkpoint(az, event):
+            if not should_send_checkpoint(az, event, self.mxid_suffix):
                 continue
 
             homeserver_checkpoint = MessageSendCheckpoint(
