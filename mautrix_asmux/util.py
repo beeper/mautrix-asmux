@@ -34,12 +34,12 @@ def is_double_puppeted(event: JSON) -> bool:
     return False
 
 
-def should_send_checkpoint(az: 'AppService', event: JSON, mxid_suffix: str) -> bool:
+def should_forward_pdu(az: 'AppService', event: JSON, mxid_suffix: str) -> bool:
     return (
         event.get("type") in CHECKPOINT_TYPES_STR
-        and event.get("sender") == f"@{az.owner}{mxid_suffix}"
+        and (not az or event.get("sender") == f"@{az.owner}{mxid_suffix}")
         and not is_double_puppeted(event)
     )
 
 
-__all__ = ["is_double_puppeted", "should_send_checkpoint"]
+__all__ = ["is_double_puppeted", "should_forward_pdu"]

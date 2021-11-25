@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Any, Awaitable, Union, List, TYPE_CHECKING
+from typing import Optional, Any, Awaitable, Union, List, Tuple, TYPE_CHECKING
 from collections import defaultdict
 from uuid import UUID
 import logging
@@ -27,7 +27,7 @@ from mautrix.util.message_send_checkpoint import (
 
 from ..database import Room, AppService
 from ..segment import track_events
-from ..util import should_send_checkpoint, is_double_puppeted
+from ..util import should_forward_pdu, is_double_puppeted
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -133,8 +133,8 @@ class Events:
 
 RECEIVED_EVENTS = Counter("asmux_received_events", "Number of incoming events",
                           labelnames=["type"])
-DROPPED_EVENTS = Counter("asmux_dropped_events", "Number of events with no target appservice",
-                         labelnames=["type"])
+DROPPED_EVENTS = Counter("asmux_dropped_events", "Number of dropped events",
+                         labelnames=["type", "reason"])
 ACCEPTED_EVENTS = Counter("asmux_accepted_events",
                           "Number of events that have a target appservice",
                           labelnames=["owner", "bridge", "type"])
@@ -176,9 +176,6 @@ class AppServiceProxy(AppServiceServerMixin):
 
         checkpoints = []
         for event in events.pdu:
-            if not should_send_checkpoint(az, event, self.mxid_suffix):
-                continue
-
             homeserver_checkpoint = MessageSendCheckpoint(
                 event_id=event.get("event_id"),
                 room_id=event.get("room_id"),
@@ -270,46 +267,56 @@ class AppServiceProxy(AppServiceServerMixin):
             return None
         return await AppService.find(owner, prefix)
 
-    async def register_room(self, event: JSON) -> Optional[Room]:
+    async def register_room(self, event: JSON) -> Tuple[Optional[Room], Optional[AppService]]:
         try:
             if ((event["type"] != "m.room.member"
                  or not event["state_key"].startswith(self.mxid_prefix))):
-                return None
+                return None, None
         except KeyError:
-            return None
+            return None, None
         user_id: UserID = event["state_key"]
         az = await self._get_az_from_user_id(user_id)
         if not az:
-            return None
+            return None, None
         room = Room(id=event["room_id"], owner=az.id, deleted=False)
         self.log.debug(f"Registering {az.name} ({az.id}) as the owner of {room.id}")
         await room.insert()
-        return room
+        return room, az
 
     async def _collect_events(self, events: list[JSON], output: dict[UUID, Events], ephemeral: bool
                               ) -> None:
         for event in (events or []):
-            RECEIVED_EVENTS.labels(type=event.get("type", "")).inc()
+            evt_type = event.get("type", "")
+            RECEIVED_EVENTS.labels(type=evt_type).inc()
             room_id = event.get("room_id")
             to_user_id = event.get("to_user_id")
             if room_id:
                 room = await Room.get(room_id)
                 if not room and not ephemeral:
-                    room = await self.register_room(event)
-                if room and not room.deleted:
+                    room, az = await self.register_room(event)
+                elif room:
+                    az = await AppService.get(room.owner)
+                else:
+                    az = None
+                if not room:
+                    self.log.debug(f"No target found for event in {room_id}")
+                    DROPPED_EVENTS.labels(reason="no target room found", type=evt_type).inc()
+                elif room.deleted:
+                    DROPPED_EVENTS.labels(reason="target room deleted", type=evt_type).inc()
+                elif not ephemeral and not should_forward_pdu(az, event, self.mxid_suffix):
+                    DROPPED_EVENTS.labels(reason="event filtered", type=evt_type).inc()
+                else:
                     output_array = output[room.owner].edu if ephemeral else output[room.owner].pdu
                     output_array.append(event)
-                    output[room.owner].types.append(event.get("type", ""))
-                else:
-                    self.log.debug(f"No target found for event in {room_id}")
-                    DROPPED_EVENTS.labels(type=event.get("type", "")).inc()
+                    output[room.owner].types.append(evt_type)
+
             elif to_user_id:
                 az = await self._get_az_from_user_id(to_user_id)
                 if az:
                     output[az.id].edu.append(event)
                 else:
                     self.log.debug(f"No target found for to-device event to {to_user_id}")
-                    DROPPED_EVENTS.labels(type=event.get("type", "")).inc()
+                    DROPPED_EVENTS.labels(type=evt_type).inc()
             # elif event.get("type") == "m.presence":
             #     TODO find all appservices that care about the sender's presence.
             #     pass

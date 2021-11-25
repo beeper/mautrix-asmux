@@ -17,7 +17,6 @@ from mautrix.util.message_send_checkpoint import (
 )
 
 from ..database import AppService
-from ..util import should_send_checkpoint
 from .as_proxy import Events, make_ping_error, migrate_state_data, send_message_checkpoints
 
 
@@ -94,7 +93,6 @@ class AppServiceHTTPHandler:
                 info=info,
             ).serialize()
             for evt in txn.pdu
-            if should_send_checkpoint(az, evt, self.mxid_suffix)
         ]
         asyncio.create_task(send_message_checkpoints(self, az, {"checkpoints": checkpoints}))
 
