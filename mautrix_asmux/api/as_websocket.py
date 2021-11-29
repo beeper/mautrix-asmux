@@ -258,7 +258,7 @@ class AppServiceWebsocketHandler:
             await ws.send(raise_errors=True, command="transaction", **data)
         ws.timeouts = 0
         self.log.debug(f"Successfully sent {txn.txn_id} to {az.name}")
-        asyncio.create_task(track_events(az, txn))
+        track_events(az, txn)
         self._send_metrics(az, txn, SUCCESSFUL_EVENTS)
 
     def _get_queue(self, az: AppService) -> AppServiceQueue:

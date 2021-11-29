@@ -3,6 +3,7 @@
 from typing import Optional, Dict, TYPE_CHECKING
 from collections import defaultdict
 import logging
+import asyncio
 import time
 
 import aiohttp
@@ -56,10 +57,8 @@ def _get_tracking_event_type(appservice: 'AppService', event: 'JSON') -> Optiona
         return None  # not a message
     elif event.get("sender", None) != f"@{appservice.owner}{mxid_suffix}":
         return None  # message isn't from the user
-    content = event.get("content")
-    if not isinstance(content, dict):
-        content = {}
-    relates_to = event.get("m.relates_to")
+    content = event.get("content") or {}
+    relates_to = content.get("m.relates_to")
     if not isinstance(relates_to, dict):
         relates_to = {}
     if relates_to.get("rel_type", None) == "m.replace":
@@ -69,12 +68,16 @@ def _get_tracking_event_type(appservice: 'AppService', event: 'JSON') -> Optiona
     return "Outgoing Matrix event"
 
 
-async def track_events(appservice: 'AppService', events: 'Events') -> None:
+def track_event(az: 'AppService', pdu: 'JSON') -> None:
+    event_type = _get_tracking_event_type(az, pdu)
+    if event_type:
+        asyncio.create_task(track(event_type, pdu["sender"], network=az.prefix,
+                                  bridge_type=az.prefix, bridge_id=str(az.id)))
+
+
+def track_events(az: 'AppService', events: 'Events') -> None:
     for event in events.pdu:
-        event_type = _get_tracking_event_type(appservice, event)
-        if event_type:
-            await track(event_type, event["sender"], network=appservice.prefix,
-                        bridge_type=appservice.prefix, bridge_id=str(appservice.id))
+        track_event(az, event)
 
 
 def init(input_token: str, input_host: str, input_mxid_suffix: str, session: aiohttp.ClientSession

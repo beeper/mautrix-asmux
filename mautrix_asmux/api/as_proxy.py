@@ -26,7 +26,7 @@ from mautrix.util.message_send_checkpoint import (
 )
 
 from ..database import Room, AppService
-from ..segment import track_events
+from ..segment import track_events, track_event
 from ..util import should_forward_pdu, is_double_puppeted
 from .errors import Error
 
@@ -227,7 +227,7 @@ class AppServiceProxy(AppServiceServerMixin):
                 status = "fatal-error"
             if status == "ok":
                 self.log.debug(f"Successfully sent {events.txn_id} to {az.name}")
-                asyncio.create_task(track_events(az, events))
+                track_events(az, events)
             metric = SUCCESSFUL_EVENTS if status == "ok" else FAILED_EVENTS
             for type in events.types:
                 metric.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
@@ -305,6 +305,7 @@ class AppServiceProxy(AppServiceServerMixin):
                     DROPPED_EVENTS.labels(reason="target room deleted", type=evt_type).inc()
                 elif not ephemeral and not should_forward_pdu(az, event, self.mxid_suffix):
                     DROPPED_EVENTS.labels(reason="event filtered", type=evt_type).inc()
+                    track_event(az, event)
                 else:
                     output_array = output[room.owner].edu if ephemeral else output[room.owner].pdu
                     output_array.append(event)

@@ -23,7 +23,7 @@ CHECKPOINT_TYPES_STR = frozenset(str(evt_type) for evt_type in CHECKPOINT_TYPES)
 
 
 def is_double_puppeted(event: JSON) -> bool:
-    content = event.get("content")
+    content = event.get("content") or {}
     if content.get("com.beeper.linkedin.puppet", False):
         return True
     for bridge in BRIDGE_DOUBLE_PUPPET_INDICATORS:
