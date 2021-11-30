@@ -26,9 +26,7 @@ per_user_counter: Dict[str, int] = defaultdict(lambda: 0)
 per_user_event_counter: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(lambda: 0))
 
 
-async def track(event: str, user_id: str, **properties: str) -> None:
-    if not token:
-        return
+async def _track(event: str, user_id: str, **properties: str) -> None:
     try:
         per_user_counter[user_id] += 1
         per_user_event_counter[user_id][event] += 1
@@ -69,10 +67,12 @@ def _get_tracking_event_type(appservice: 'AppService', event: 'JSON') -> Optiona
 
 
 def track_event(az: 'AppService', pdu: 'JSON') -> None:
+    if not token:
+        return
     event_type = _get_tracking_event_type(az, pdu)
     if event_type:
-        asyncio.create_task(track(event_type, pdu["sender"], network=az.prefix,
-                                  bridge_type=az.prefix, bridge_id=str(az.id)))
+        asyncio.create_task(_track(event_type, pdu["sender"], network=az.prefix,
+                                   bridge_type=az.prefix, bridge_id=str(az.id)))
 
 
 def track_events(az: 'AppService', events: 'Events') -> None:
