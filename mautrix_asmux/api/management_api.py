@@ -207,7 +207,7 @@ class ManagementAPI:
                 }],
             },
             "url": az.address,
-            "sender_localpart": f"{prefix}_{re.escape(az.bot)}",
+            "sender_localpart": f"{self.global_prefix}{az.owner}_{az.prefix}_{az.bot}",
             "rate_limited": True,
         }
         if config_password:
