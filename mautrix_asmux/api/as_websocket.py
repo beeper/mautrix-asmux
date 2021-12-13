@@ -213,6 +213,7 @@ class AppServiceWebsocketHandler:
             ws.queue_task = asyncio.create_task(self._consume_queue(az, ws))
             await ws.handle()
         finally:
+            ws.log.debug("Websocket handler finished")
             ws.cancel_queue_task("Websocket disconnected")
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).dec()
             if self.websockets.get(az.id) == ws:
@@ -316,9 +317,6 @@ class AppServiceWebsocketHandler:
             raise
         except Exception as e:
             ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: {type(e).__name__} {e}")
-        except asyncio.CancelledError:
-            ws.log.debug("Queue consumer cancelled")
-            raise
 
     async def _consume_queue(self, az: AppService, ws: WebsocketHandler) -> None:
         queue = self._get_queue(az)
@@ -329,6 +327,9 @@ class AppServiceWebsocketHandler:
                 await self._consume_queue_one(az, ws, queue)
         except Exception:
             self.log.exception("Fatal error in queue consumer")
+        except asyncio.CancelledError as e:
+            ws.log.debug(f"Queue consumer cancelled: {e}")
+            raise
         finally:
             queue.stop_consuming(consumer_id)
 

@@ -122,11 +122,14 @@ class WebsocketHandler:
             self.queue_task.cancel(reason)
 
     async def close(self, code: Union[int, WSCloseCode], status: Optional[str] = None) -> None:
-        self.cancel_queue_task(f"Closing websocket ({code} / {status})")
-        message = (json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
-                   if status else None)
         try:
-            await self._ws.close(code=code, message=message)
+            message = f"Closing websocket ({code} / {status})"
+            self.log.debug(message)
+            self.cancel_queue_task(message)
+            message = (json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
+                       if status else None)
+            ret = await self._ws.close(code=code, message=message)
+            self.log.debug(f"Websocket closed: {ret}")
         except Exception:
             self.log.exception("Error sending close to client")
 

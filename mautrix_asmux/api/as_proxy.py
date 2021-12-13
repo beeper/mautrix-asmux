@@ -202,7 +202,7 @@ class AppServiceProxy(AppServiceServerMixin):
         if not checkpoints:
             return
 
-        self.log.debug(f"Sending message send checkpoints for {az.name} to API server.")
+        self.log.debug(f"Sending message send checkpoints for {az.name} (step: HOMESERVER/CLIENT)")
         await send_message_checkpoints(self, az, {"checkpoints": checkpoints})
 
     async def post_events(self, az: AppService, events: Events) -> str:
