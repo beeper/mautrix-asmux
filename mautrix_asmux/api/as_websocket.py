@@ -278,7 +278,7 @@ class AppServiceWebsocketHandler:
                 room_id=evt.get("room_id"),
                 step=MessageSendCheckpointStep.BRIDGE,
                 timestamp=int(time.time() * 1000),
-                status=MessageSendCheckpointStatus.PERM_FAILURE,
+                status=MessageSendCheckpointStatus.TIMEOUT,
                 event_type=evt.get("type"),
                 reported_by=MessageSendCheckpointReportedBy.ASMUX,
                 info="dropped old event",
