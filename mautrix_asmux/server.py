@@ -1,16 +1,20 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional
-import logging
 import asyncio
+import logging
 
-import aiohttp
 from aiohttp import web
 from yarl import URL
+import aiohttp
 
+from .api import (
+    AppServiceHTTPHandler,
+    AppServiceProxy,
+    AppServiceWebsocketHandler,
+    ClientProxy,
+    ManagementAPI,
+)
 from .config import Config
-from .api import (ClientProxy, AppServiceProxy, AppServiceWebsocketHandler, AppServiceHTTPHandler,
-                  ManagementAPI)
 
 
 class MuxServer:
@@ -46,21 +50,30 @@ class MuxServer:
             checkpoint_url=checkpoint_url,
             http=self.http,
         )
-        self.as_http = AppServiceHTTPHandler(mxid_suffix=mxid_suffix, http=self.http,
-                                             checkpoint_url=checkpoint_url)
-        self.as_websocket = AppServiceWebsocketHandler(config=config, mxid_prefix=mxid_prefix,
-                                                       mxid_suffix=mxid_suffix)
-        self.cs_proxy = ClientProxy(server=self, mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix,
-                                    hs_address=URL(config["homeserver.address"]),
-                                    as_token=config["appservice.as_token"], http=self.http,
-                                    login_shared_secret=config["homeserver.login_shared_secret"])
+        self.as_http = AppServiceHTTPHandler(
+            mxid_suffix=mxid_suffix, http=self.http, checkpoint_url=checkpoint_url
+        )
+        self.as_websocket = AppServiceWebsocketHandler(
+            config=config, mxid_prefix=mxid_prefix, mxid_suffix=mxid_suffix
+        )
+        self.cs_proxy = ClientProxy(
+            server=self,
+            mxid_prefix=mxid_prefix,
+            mxid_suffix=mxid_suffix,
+            hs_address=URL(config["homeserver.address"]),
+            as_token=config["appservice.as_token"],
+            http=self.http,
+            login_shared_secret=config["homeserver.login_shared_secret"],
+        )
         self.management_api = ManagementAPI(config=config, http=self.http, server=self)
 
         self.app = web.Application()
         self.as_proxy.register_routes(self.app)
         self.app.router.add_route(
-            "PUT", "/_matrix/app/unstable/fi.mau.syncproxy/error/{transaction_id}",
-            self.as_proxy.handle_syncproxy_error)
+            "PUT",
+            "/_matrix/app/unstable/fi.mau.syncproxy/error/{transaction_id}",
+            self.as_proxy.handle_syncproxy_error,
+        )
         self.app.add_subapp("/_matrix/asmux/mxauth", self.management_api.mxauth_app)
         self.app.add_subapp("/_matrix/asmux/public", self.management_api.public_app)
         self.app.add_subapp("/_matrix/asmux/websocket", self.management_api.websocket_app)

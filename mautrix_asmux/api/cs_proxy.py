@@ -1,24 +1,23 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Any, Tuple, Callable, Awaitable, Dict, List, Mapping, TYPE_CHECKING
-from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Optional
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from uuid import UUID
 import asyncio
-import logging
 import hashlib
 import hmac
 import json
+import logging
 import time
 
-import aiohttp
-from aiohttp import web, hdrs
-from yarl import URL
-from multidict import CIMultiDict, MultiDict
-
+from aiohttp import hdrs, web
 from mautrix.client import ClientAPI
-from mautrix.types import UserID, RoomID, EventType
+from mautrix.types import EventType, RoomID, UserID
 from mautrix.util.opt_prometheus import Counter
+from multidict import CIMultiDict, MultiDict
+from yarl import URL
+import aiohttp
 
 from ..database import AppService, User
 from .errors import Error
@@ -28,12 +27,16 @@ if TYPE_CHECKING:
 
 Handler = Callable[[web.Request], Awaitable[web.Response]]
 
-REQUESTS_RECEIVED = Counter("asmux_requests_received",
-                            "Number of client-server API requests received from bridges",
-                            labelnames=["owner", "bridge", "method", "endpoint"])
-REQUESTS_HANDLED = Counter("asmux_requests_handled",
-                           "Number of client-server API requests handled",
-                           labelnames=["owner", "bridge", "method", "endpoint"])
+REQUESTS_RECEIVED = Counter(
+    "asmux_requests_received",
+    "Number of client-server API requests received from bridges",
+    labelnames=["owner", "bridge", "method", "endpoint"],
+)
+REQUESTS_HANDLED = Counter(
+    "asmux_requests_handled",
+    "Number of client-server API requests handled",
+    labelnames=["owner", "bridge", "method", "endpoint"],
+)
 
 
 class HTTPCustomError(web.HTTPError):
@@ -57,15 +60,23 @@ class ClientProxy:
     dm_locks: dict[UserID, asyncio.Lock]
     user_ids: dict[str, UserID]
 
-    def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_address: URL,
-                 as_token: str, login_shared_secret: Optional[str], http: aiohttp.ClientSession,
-                 ) -> None:
+    def __init__(
+        self,
+        server: "MuxServer",
+        mxid_prefix: str,
+        mxid_suffix: str,
+        hs_address: URL,
+        as_token: str,
+        login_shared_secret: Optional[str],
+        http: aiohttp.ClientSession,
+    ) -> None:
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
         self.hs_address = hs_address.with_path("/_matrix")
         self.as_token = as_token
-        self.login_shared_secret = (login_shared_secret.encode("utf-8")
-                                    if login_shared_secret else None)
+        self.login_shared_secret = (
+            login_shared_secret.encode("utf-8") if login_shared_secret else None
+        )
         self.dm_locks = defaultdict(lambda: asyncio.Lock())
         self.user_ids = {}
         self.http = http
@@ -98,8 +109,10 @@ class ClientProxy:
             return await handler(req)
         except asyncio.CancelledError:
             duration = round(time.monotonic() - start, 3)
-            self.log.debug(f"Proxying request {self.request_log_fmt(req)}"
-                           f" cancelled after {duration} seconds")
+            self.log.debug(
+                f"Proxying request {self.request_log_fmt(req)}"
+                f" cancelled after {duration} seconds"
+            )
             raise
 
     @asynccontextmanager
@@ -107,8 +120,9 @@ class ClientProxy:
         try:
             async with self.http.get(url, headers={"Authorization": f"Bearer {auth}"}) as resp:
                 if raise_error and resp.status >= 400:
-                    raise HTTPCustomError(status_code=resp.status, headers=resp.headers,
-                                          body=await resp.read())
+                    raise HTTPCustomError(
+                        status_code=resp.status, headers=resp.headers, body=await resp.read()
+                    )
                 yield resp
         except aiohttp.ClientError:
             raise Error.failed_to_contact_homeserver
@@ -116,11 +130,13 @@ class ClientProxy:
     @asynccontextmanager
     async def _put(self, url: URL, auth: str, json: dict[str, Any]) -> web.Response:
         try:
-            async with self.http.put(url, headers={"Authorization": f"Bearer {auth}"}, json=json
-                                     ) as resp:
+            async with self.http.put(
+                url, headers={"Authorization": f"Bearer {auth}"}, json=json
+            ) as resp:
                 if resp.status >= 400:
-                    raise HTTPCustomError(status_code=resp.status, headers=resp.headers,
-                                          body=await resp.read())
+                    raise HTTPCustomError(
+                        status_code=resp.status, headers=resp.headers, body=await resp.read()
+                    )
                 yield resp
         except aiohttp.ClientError:
             raise Error.failed_to_contact_homeserver
@@ -138,21 +154,24 @@ class ClientProxy:
                 user_id = self.user_ids[token_hash] = (await resp.json())["user_id"]
             return user_id
 
-    def _remove_current_dms(self, dms: dict[UserID, list[RoomID]], username: str, bridge: str
-                            ) -> dict[UserID, list[RoomID]]:
+    def _remove_current_dms(
+        self, dms: dict[UserID, list[RoomID]], username: str, bridge: str
+    ) -> dict[UserID, list[RoomID]]:
         prefix = f"{self.mxid_prefix}{username}_{bridge}_"
         suffix = self.mxid_suffix
         bot = f"{prefix}bot{suffix}"
 
-        return {user_id: rooms for user_id, rooms in dms.items()
-                if not (user_id.startswith(prefix) and user_id.endswith(suffix)
-                        and user_id != bot)}
+        return {
+            user_id: rooms
+            for user_id, rooms in dms.items()
+            if not (user_id.startswith(prefix) and user_id.endswith(suffix) and user_id != bot)
+        }
 
     async def update_dms(self, req: web.Request) -> web.Response:
         try:
             auth = req.headers["Authorization"]
             assert auth.startswith("Bearer ")
-            auth = auth[len("Bearer "):]
+            auth = auth[len("Bearer ") :]
         except (KeyError, AssertionError):
             raise Error.invalid_auth_header
         try:
@@ -166,8 +185,13 @@ class ClientProxy:
             raise Error.mismatching_user
 
         async with self.dm_locks[user_id]:
-            url = (self.hs_address / "client" / "r0"
-                   / "user" / user_id / "account_data" / str(EventType.DIRECT))
+            url = (
+                self.hs_address
+                / "client/r0/user"
+                / user_id
+                / "account_data"
+                / str(EventType.DIRECT)
+            )
             try:
                 async with self._get(url, auth) as resp:
                     dms = await resp.json()
@@ -191,18 +215,26 @@ class ClientProxy:
             pass
         json_body = await req.json()
         if json_body.get("type") != "m.login.password":
-            return await self.proxy(req, _spec_override="client", _path_override="r0/login",
-                                    _body_override=body)
+            return await self.proxy(
+                req, _spec_override="client", _path_override="r0/login", _body_override=body
+            )
         if await self.convert_login_password(json_body):
             body = json.dumps(json_body)
             headers["Content-Type"] = "application/json"
             # TODO remove this everywhere (in _proxy)?
             del headers["Content-Length"]
-        return await self._proxy(req, self.hs_address / "client/r0/login",
-                                 body=body, headers=headers)
+        return await self._proxy(
+            req, self.hs_address / "client/r0/login", body=body, headers=headers
+        )
 
-    async def proxy(self, req: web.Request, *, _spec_override: str = "", _path_override: str = "",
-                    _body_override: Any = None) -> web.Response:
+    async def proxy(
+        self,
+        req: web.Request,
+        *,
+        _spec_override: str = "",
+        _path_override: str = "",
+        _body_override: Any = None,
+    ) -> web.Response:
         spec: str = _spec_override or req.match_info["spec"]
         path: str = _path_override or req.match_info["path"]
         url = self.hs_address.with_path(req.raw_path.split("?", 1)[0], encoded=True)
@@ -222,23 +254,16 @@ class ClientProxy:
 
         body = _body_override or req.content
 
-        if spec == "client" and ((path == "r0/delete_devices" and req.method == "POST")
-                                 or (path.startswith("r0/devices/") and req.method == "DELETE")):
+        if spec == "client" and (
+            (path == "r0/delete_devices" and req.method == "POST")
+            or (path.startswith("r0/devices/") and req.method == "DELETE")
+        ):
             body = await req.read()
             json_body = await req.json()
-            if await self.convert_login_password(json_body.get("auth", {}), az=az,
-                                                 user_id=query["user_id"]):
+            if await self.convert_login_password(
+                json_body.get("auth", {}), az=az, user_id=query["user_id"]
+            ):
                 body = json.dumps(json_body).encode("utf-8")
-        # Disabled at least for now, incoming remote events are fairly high-traffic especially for
-        # users with big telegram accounts
-        #
-        # if ((spec == "client" and path.startswith("r0/rooms/")
-        #      and ("/send/m.room.message/" in path or "/send/m.room.encrypted/" in path)
-        #      and query["user_id"].startswith(f"{self.mxid_prefix}{az.owner}_{az.prefix}_")
-        #      and query["user_id"] != f"{self.mxid_prefix}{az.owner}_{az.prefix}_"
-        #                              f"{az.bot}{self.mxid_suffix}")):
-        #     asyncio.ensure_future(track("Incoming remote event", f"@{az.owner}{self.mxid_suffix}",
-        #                                 bridge_type=az.prefix, bridge_id=str(az.id)))
 
         return await self._proxy(req, url, headers, query, body, az=az)
 
@@ -253,8 +278,9 @@ class ClientProxy:
                 return f"/rooms/.../{parts[6]}/..."
             else:
                 return f"/rooms/.../{parts[6]}"
-        elif (path.startswith("/_matrix/client/unstable/org.matrix.msc2716/rooms/")
-              and path.endswith("/batch_send")):
+        elif path.startswith(
+            "/_matrix/client/unstable/org.matrix.msc2716/rooms/"
+        ) and path.endswith("/batch_send"):
             return f"/unstable/rooms/.../batch_send"
         elif path.startswith("/_matrix/client/r0/user/") and len(parts) > 6:
             if len(parts) > 8 and parts[6] == "rooms":
@@ -282,29 +308,44 @@ class ClientProxy:
                 return f"/profile/.../{parts[6]}"
             return "/profile/..."
         elif path.startswith("/_matrix/client/r0/"):
-            return path[len("/_matrix/client/r0"):]
+            return path[len("/_matrix/client/r0") :]
         elif path.startswith("/_matrix/client/unstable/"):
-            return path[len("/_matrix/client"):]
+            return path[len("/_matrix/client") :]
         else:
             return path
 
-    async def _proxy(self, req: web.Request, url: URL, headers: Optional[CIMultiDict[str]] = None,
-                     query: Optional[MultiDict[str]] = None, body: Any = None,
-                     az: Optional[AppService] = None) -> web.Response:
-        metric_labels = {"method": req.method, "endpoint": self._relevant_path_part(url),
-                         "owner": "", "bridge": ""}
+    async def _proxy(
+        self,
+        req: web.Request,
+        url: URL,
+        headers: Optional[CIMultiDict[str]] = None,
+        query: Optional[MultiDict[str]] = None,
+        body: Any = None,
+        az: Optional[AppService] = None,
+    ) -> web.Response:
+        metric_labels = {
+            "method": req.method,
+            "endpoint": self._relevant_path_part(url),
+            "owner": "",
+            "bridge": "",
+        }
         if az:
             metric_labels["owner"] = az.owner
             metric_labels["bridge"] = az.prefix
         REQUESTS_RECEIVED.labels(**metric_labels).inc()
         try:
             req["proxy_url"] = url.with_query(query or req.query)
-            resp = await self.http.request(req.method, url,
-                                           headers=headers or req.headers.copy(),
-                                           params=query or req.query.copy(),
-                                           data=body or req.content)
+            resp = await self.http.request(
+                req.method,
+                url,
+                headers=headers or req.headers.copy(),
+                params=query or req.query.copy(),
+                data=body or req.content,
+            )
         except aiohttp.ClientError as e:
-            self.log.warning(f"{type(e).__name__} proxying request {self.request_log_fmt(req)}: {e}")
+            self.log.warning(
+                f"{type(e).__name__} proxying request {self.request_log_fmt(req)}: {e}"
+            )
             raise Error.failed_to_contact_homeserver
         finally:
             REQUESTS_HANDLED.labels(**metric_labels).inc()
@@ -316,7 +357,7 @@ class ClientProxy:
         if not user_id:
             return None
         elif user_id.startswith(self.mxid_prefix) and user_id.endswith(self.mxid_suffix):
-            localpart = user_id[len(self.mxid_prefix):-len(self.mxid_suffix)]
+            localpart = user_id[len(self.mxid_prefix) : -len(self.mxid_suffix)]
             owner, prefix, _ = localpart.split("_", 2)
             az = await AppService.find(owner, prefix)
             if not az:
@@ -329,8 +370,9 @@ class ClientProxy:
                 return None
             return user.login_token
 
-    async def convert_login_password(self, data: Any, az: Optional[AppService] = None,
-                                     user_id: Optional[str] = None) -> bool:
+    async def convert_login_password(
+        self, data: Any, az: Optional[AppService] = None, user_id: Optional[str] = None
+    ) -> bool:
         if not self.login_shared_secret:
             return False
         try:
@@ -346,25 +388,28 @@ class ClientProxy:
             login_token = az.login_token if az else await self._find_login_token(user_id)
             if not login_token:
                 return False
-            expected_password = hmac.new(login_token.encode("utf-8"), user_id.encode("utf-8"),
-                                         hashlib.sha512).hexdigest()
+            expected_password = hmac.new(
+                login_token.encode("utf-8"), user_id.encode("utf-8"), hashlib.sha512
+            ).hexdigest()
             if data["password"] == expected_password:
-                data["password"] = hmac.new(self.login_shared_secret, user_id.encode("utf-8"),
-                                            hashlib.sha512).hexdigest()
+                data["password"] = hmac.new(
+                    self.login_shared_secret, user_id.encode("utf-8"), hashlib.sha512
+                ).hexdigest()
                 return True
         except (KeyError, ValueError):
             pass
         return False
 
     @staticmethod
-    async def find_appservice(req: web.Request, header: str = "Authorization",
-                              raise_errors: bool = False) -> Optional[AppService]:
+    async def find_appservice(
+        req: web.Request, header: str = "Authorization", raise_errors: bool = False
+    ) -> Optional[AppService]:
         try:
             auth = req.headers[header]
             assert auth
             if not header.startswith("X-"):
                 assert auth.startswith("Bearer ")
-                auth = auth[len("Bearer "):]
+                auth = auth[len("Bearer ") :]
             uuid = UUID(auth[:36])
             token = auth[37:]
         except (KeyError, AssertionError):

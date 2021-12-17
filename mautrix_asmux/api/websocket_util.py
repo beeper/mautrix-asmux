@@ -1,16 +1,16 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Dict, Optional, Any, Callable, Awaitable, Union
-import logging
+from typing import Any, Awaitable, Callable, Dict, Optional, Union
 import asyncio
 import json
+import logging
 import time
 
 from aiohttp import web
-from aiohttp.http import WSMessage, WSMsgType, WSCloseCode
+from aiohttp.http import WSCloseCode, WSMessage, WSMsgType
 
 Data = dict[str, Any]
-CommandHandler = Callable[['WebsocketHandler', Data], Awaitable[Optional[Data]]]
+CommandHandler = Callable[["WebsocketHandler", Data], Awaitable[Optional[Data]]]
 
 
 class WebsocketClosedError(Exception):
@@ -49,15 +49,17 @@ class WebsocketHandler:
     def set_handler(self, command: str, handler: CommandHandler) -> None:
         self._command_handlers[command] = handler
 
-    async def _call_handler(self, handler: CommandHandler, command: str, req_id: Optional[int],
-                            data: Data) -> None:
+    async def _call_handler(
+        self, handler: CommandHandler, command: str, req_id: Optional[int], data: Data
+    ) -> None:
         try:
             resp = await handler(self, data)
         except Exception as e:
             self.log.exception(f"Error handling {command} {req_id or '<no id>'}")
             if req_id is not None:
-                await self.send(command="error", id=req_id, data={"code": type(e).__name__,
-                                                                  "message": str(e)})
+                await self.send(
+                    command="error", id=req_id, data={"code": type(e).__name__, "message": str(e)}
+                )
         else:
             if req_id is not None:
                 await self.send(command="response", id=req_id, data=resp)
@@ -95,8 +97,7 @@ class WebsocketHandler:
                 self.log.debug(f"Unhandled response received: {req}")
             else:
                 if waiter.cancelled():
-                    self.log.debug(f"Got response to {req_id}, "
-                                   f"but the waiter is cancelled: {req}")
+                    self.log.debug(f"Got response to {req_id}, but the waiter is cancelled: {req}")
                     return
                 self.log.debug(f"Received response to {req_id}: {req}")
                 if command == "response":
@@ -126,8 +127,11 @@ class WebsocketHandler:
             message = f"Closing websocket ({code} / {status})"
             self.log.debug(message)
             self.cancel_queue_task(message)
-            message = (json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
-                       if status else None)
+            message = (
+                json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
+                if status
+                else None
+            )
             ret = await self._ws.close(code=code, message=message)
             self.log.debug(f"Websocket closed: {ret}")
         except Exception:
@@ -141,13 +145,24 @@ class WebsocketHandler:
             if raise_errors:
                 raise
 
-    async def request(self, command: str, *, top_level_data: Optional[Dict[str, Any]] = None,
-                      raise_errors: bool = False, **kwargs: Any) -> Optional[Data]:
+    async def request(
+        self,
+        command: str,
+        *,
+        top_level_data: Optional[Dict[str, Any]] = None,
+        raise_errors: bool = False,
+        **kwargs: Any,
+    ) -> Optional[Data]:
         self._prev_req_id += 1
         req_id = self._prev_req_id
         self._request_waiters[req_id] = fut = asyncio.get_running_loop().create_future()
-        await self.send(command=command, id=req_id, raise_errors=raise_errors, data=kwargs,
-                        **(top_level_data or {}))
+        await self.send(
+            command=command,
+            id=req_id,
+            raise_errors=raise_errors,
+            data=kwargs,
+            **(top_level_data or {}),
+        )
         return await fut
 
     def prepare(self, req: web.Request) -> Awaitable[None]:
@@ -171,8 +186,9 @@ class WebsocketHandler:
                     except Exception:
                         self.log.exception("Error handling websocket text message")
                 else:
-                    self.log.debug("Unhandled websocket message of type %s: %s", msg.type,
-                                   msg.data)
+                    self.log.debug(
+                        "Unhandled websocket message of type %s: %s", msg.type, msg.data
+                    )
         except Exception:
             self.log.exception("Fatal error in websocket handler")
         else:

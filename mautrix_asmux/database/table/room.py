@@ -1,10 +1,9 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Dict, Optional, ClassVar
+from typing import ClassVar, Dict, Optional
 from uuid import UUID
 
 from attr import dataclass
-
 from mautrix.types import RoomID
 
 from .base import Base
@@ -16,9 +15,9 @@ class Room(Base):
     owner: UUID
     deleted: bool
 
-    cache_by_id: ClassVar[Dict[RoomID, 'Room']] = {}
+    cache_by_id: ClassVar[Dict[RoomID, "Room"]] = {}
 
-    def _add_to_cache(self) -> 'Room':
+    def _add_to_cache(self) -> "Room":
         self.cache_by_id[self.id] = self
         return self
 
@@ -26,7 +25,7 @@ class Room(Base):
         del self.cache_by_id[self.id]
 
     @classmethod
-    async def get(cls, room_id: RoomID) -> Optional['Room']:
+    async def get(cls, room_id: RoomID) -> Optional["Room"]:
         try:
             return cls.cache_by_id[id]
         except KeyError:
@@ -35,8 +34,12 @@ class Room(Base):
         return Room(**row)._add_to_cache() if row else None
 
     async def insert(self) -> None:
-        await self.db.execute("INSERT INTO room (id, owner, deleted) VALUES ($1, $2, $3)",
-                              self.id, self.owner, self.deleted)
+        await self.db.execute(
+            "INSERT INTO room (id, owner, deleted) VALUES ($1, $2, $3)",
+            self.id,
+            self.owner,
+            self.deleted,
+        )
         self._add_to_cache()
 
     async def delete(self) -> None:

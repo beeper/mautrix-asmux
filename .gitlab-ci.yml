@@ -1,5 +1,6 @@
 build:
   stage: build
+  needs: []
   image: docker:latest
   services:
   - docker:dind
@@ -12,3 +13,13 @@ build:
       docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest;
       docker push $CI_REGISTRY_IMAGE:latest;
     fi
+
+lint:
+  stage: test
+  needs: []
+  image: python:3.9-alpine
+  before_script:
+  - pip install black isort
+  script:
+  - black --check --diff --fast mautrix_asmux/
+  - isort --check-only --diff mautrix_asmux/

@@ -1,37 +1,44 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Any, Dict, Union, Optional, List
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
-import logging
 import asyncio
 import json
+import logging
 import time
 
-import aiohttp
-from yarl import URL
 from aiohttp import web
 from aiohttp.http import WSCloseCode
-
-from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
-from mautrix.util.message_send_checkpoint import (
-    MessageSendCheckpoint, MessageSendCheckpointStep, MessageSendCheckpointReportedBy,
-    MessageSendCheckpointStatus
-)
-from mautrix.util.logging import TraceLogger
-from mautrix.util.opt_prometheus import Gauge, Counter
-from mautrix.errors import make_request_error, standard_error, MatrixStandardRequestError
-from mautrix.types import JSON
 from mautrix.api import HTTPAPI
+from mautrix.errors import MatrixStandardRequestError, make_request_error, standard_error
+from mautrix.types import JSON
+from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
+from mautrix.util.logging import TraceLogger
+from mautrix.util.message_send_checkpoint import (
+    MessageSendCheckpoint,
+    MessageSendCheckpointReportedBy,
+    MessageSendCheckpointStatus,
+    MessageSendCheckpointStep,
+)
+from mautrix.util.opt_prometheus import Counter, Gauge
+from yarl import URL
+import aiohttp
 
-from ..database import AppService
 from ..config import Config
+from ..database import AppService
 from ..segment import track_events
 from ..sygnal import PushKey
+from .as_proxy import (
+    FAILED_EVENTS,
+    SUCCESSFUL_EVENTS,
+    Events,
+    make_ping_error,
+    migrate_state_data,
+    send_message_checkpoints,
+)
+from .as_queue import AppServiceQueue, QueueWaiterOverridden
 from .cs_proxy import ClientProxy
 from .errors import Error
-from .as_proxy import (Events, make_ping_error, migrate_state_data, send_message_checkpoints,
-                       SUCCESSFUL_EVENTS, FAILED_EVENTS)
-from .as_queue import AppServiceQueue, QueueWaiterOverridden
 from .websocket_util import WebsocketHandler
 
 # Response timeout when sending an event via websocket for the first time.
@@ -47,9 +54,11 @@ PREEMPTIVE_WAKEUP_PUSH_DELAY = 10 * 60
 
 WS_CLOSE_REPLACED = 4001
 WS_NOT_ACKNOWLEDGED = 4002
-CONNECTED_WEBSOCKETS = Gauge("asmux_connected_websockets",
-                             "Bridges connected to the appservice transaction websocket",
-                             labelnames=["owner", "bridge"])
+CONNECTED_WEBSOCKETS = Gauge(
+    "asmux_connected_websockets",
+    "Bridges connected to the appservice transaction websocket",
+    labelnames=["owner", "bridge"],
+)
 
 
 @standard_error("FI.MAU.SYNCPROXY.NOT_ACTIVE")
@@ -79,8 +88,9 @@ class AppServiceWebsocketHandler:
     def __init__(self, config: Config, mxid_prefix: str, mxid_suffix: str) -> None:
         self.remote_status_endpoint = config["mux.remote_status_endpoint"]
         self.bridge_status_endpoint = config["mux.bridge_status_endpoint"]
-        self.sync_proxy = (URL(config["mux.sync_proxy.url"]) if config["mux.sync_proxy.url"]
-                           else None)
+        self.sync_proxy = (
+            URL(config["mux.sync_proxy.url"]) if config["mux.sync_proxy.url"] else None
+        )
         self.sync_proxy_token = config["mux.sync_proxy.token"]
         self.sync_proxy_own_address = config["mux.sync_proxy.asmux_address"]
         self.hs_token = config["appservice.hs_token"]
@@ -92,26 +102,35 @@ class AppServiceWebsocketHandler:
         self.requests = {}
         self._stopping = False
         self.checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
-        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20),
-                                                     headers={"User-Agent": HTTPAPI.default_ua})
+        self.api_server_sess = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=20), headers={"User-Agent": HTTPAPI.default_ua}
+        )
         self.sync_proxy_sess = aiohttp.ClientSession(headers={"User-Agent": HTTPAPI.default_ua})
 
     async def stop(self) -> None:
         self._stopping = True
         self.log.debug("Disconnecting websockets")
-        await asyncio.gather(*(ws.close(code=WSCloseCode.SERVICE_RESTART,
-                                        status="server_shutting_down")
-                               for ws in self.websockets.values()))
+        await asyncio.gather(
+            *(
+                ws.close(code=WSCloseCode.SERVICE_RESTART, status="server_shutting_down")
+                for ws in self.websockets.values()
+            )
+        )
 
-    async def send_remote_status(self, az: AppService, state: Union[dict[str, Any], BridgeState]
-                                 ) -> None:
+    async def send_remote_status(
+        self, az: AppService, state: Union[dict[str, Any], BridgeState]
+    ) -> None:
         if not self.remote_status_endpoint:
             return
         if not isinstance(state, BridgeState):
             state = BridgeState.deserialize(migrate_state_data(state, is_global=False))
         self.log.debug(f"Sending remote status for {az.name} to API server: {state}")
-        await state.send(url=self.remote_status_endpoint.format(owner=az.owner, prefix=az.prefix),
-                         token=az.real_as_token, log=self.log, log_sent=False)
+        await state.send(
+            url=self.remote_status_endpoint.format(owner=az.owner, prefix=az.prefix),
+            token=az.real_as_token,
+            log=self.log,
+            log_sent=False,
+        )
 
     async def send_bridge_status(self, az: AppService, state_event: BridgeStateEvent) -> None:
         if not self.bridge_status_endpoint:
@@ -125,8 +144,9 @@ class AppServiceWebsocketHandler:
                 if not 200 <= resp.status < 300:
                     text = await resp.text()
                     text = text.replace("\n", "\\n")
-                    self.log.warning(f"Unexpected status code {resp.status} "
-                                     f"sending bridge state update: {text}")
+                    self.log.warning(
+                        f"Unexpected status code {resp.status} sending bridge state update: {text}"
+                    )
         except Exception as e:
             self.log.warning(f"Failed to send updated bridge state: {e}")
 
@@ -176,8 +196,9 @@ class AppServiceWebsocketHandler:
         except SyncProxyNotActive as e:
             self.log.debug(f"Failed to request sync proxy stop for {az.id}: {e}")
         except Exception as e:
-            self.log.warning(f"Failed to request sync proxy stop for {az.id}: "
-                             f"{type(e).__name__}: {e}")
+            self.log.warning(
+                f"Failed to request sync proxy stop for {az.id}: {type(e).__name__}: {e}"
+            )
             self.log.trace("Sync proxy stop error", exc_info=True)
 
     async def handle_ws(self, req: web.Request) -> web.WebSocketResponse:
@@ -188,12 +209,16 @@ class AppServiceWebsocketHandler:
             raise Error.appservice_ws_not_enabled
         identifier = req.headers.get("X-Mautrix-Process-ID", "unidentified")
         proto_version = int(req.headers.get("X-Mautrix-Websocket-Version", "1"))
-        ws = WebsocketHandler(type_name="Websocket transaction connection",
-                              proto="fi.mau.as_sync", version=proto_version,
-                              log=self.log.getChild(az.name).getChild(identifier))
+        ws = WebsocketHandler(
+            type_name="Websocket transaction connection",
+            proto="fi.mau.as_sync",
+            version=proto_version,
+            log=self.log.getChild(az.name).getChild(identifier),
+        )
         ws.set_handler("bridge_status", lambda _, data: self.send_remote_status(az, data))
-        ws.set_handler("message_checkpoint",
-                       lambda _, data: send_message_checkpoints(self, az, data))
+        ws.set_handler(
+            "message_checkpoint", lambda _, data: send_message_checkpoints(self, az, data)
+        )
         ws.set_handler("push_key", lambda _, data: az.set_push_key(PushKey.deserialize(data)))
         ws.set_handler("start_sync", lambda _, data: self.start_sync_proxy(az, data))
         ws.set_handler("ping", self.ping_server)
@@ -221,17 +246,18 @@ class AppServiceWebsocketHandler:
 
                 asyncio.create_task(self.stop_sync_proxy(az))
                 if not self._stopping:
-                    asyncio.create_task(self.send_bridge_status(
-                        az, BridgeStateEvent.BRIDGE_UNREACHABLE,
-                    ))
+                    asyncio.create_task(
+                        self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE)
+                    )
         return ws.response
 
     def _send_metrics(self, az: AppService, txn: Events, metric: Counter) -> None:
         for type in txn.types:
             metric.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
 
-    async def _send_next_txn(self, az: AppService, ws: WebsocketHandler, txn: Events,
-                             timeout: int) -> None:
+    async def _send_next_txn(
+        self, az: AppService, ws: WebsocketHandler, txn: Events, timeout: int
+    ) -> None:
         ws.log.debug(f"Sending transaction {txn.txn_id} to {az.name} via websocket")
         data = {"status": "ok", "txn_id": txn.txn_id, **txn.serialize()}
         if ws.proto >= 3:
@@ -245,12 +271,14 @@ class AppServiceWebsocketHandler:
             try:
                 await asyncio.wait_for(
                     ws.request("transaction", top_level_data=data, raise_errors=True),
-                    timeout=RETRY_SEND_TIMEOUT
+                    timeout=RETRY_SEND_TIMEOUT,
                 )
             except asyncio.TimeoutError:
-                ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
-                               f"didn't get response within {RETRY_SEND_TIMEOUT} seconds"
-                               f" -- legacy protocol, dropping transaction")
+                ws.log.warning(
+                    f"Failed to send {txn.txn_id} to {az.name}: "
+                    f"didn't get response within {RETRY_SEND_TIMEOUT} seconds"
+                    f" -- legacy protocol, dropping transaction"
+                )
                 ws.timeouts += 1
                 self._send_metrics(az, txn, FAILED_EVENTS)
                 return
@@ -287,8 +315,9 @@ class AppServiceWebsocketHandler:
         ]
         await send_message_checkpoints(self, az, {"checkpoints": checkpoints})
 
-    async def _consume_queue_one(self, az: AppService, ws: WebsocketHandler, queue: AppServiceQueue
-                                 ) -> None:
+    async def _consume_queue_one(
+        self, az: AppService, ws: WebsocketHandler, queue: AppServiceQueue
+    ) -> None:
         expired = queue.pop_expired_pdu()
         if expired:
             asyncio.create_task(self.report_expired_pdu(az, expired))
@@ -303,12 +332,15 @@ class AppServiceWebsocketHandler:
             async with queue.next() as txn:
                 await self._send_next_txn(az, ws, txn, timeout)
         except asyncio.TimeoutError:
-            ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: "
-                           f"didn't get response within {timeout} seconds")
+            ws.log.warning(
+                f"Failed to send {txn.txn_id} to {az.name}: "
+                f"didn't get response within {timeout} seconds"
+            )
             ws.timeouts += 1
             if ws.timeouts >= TIMEOUT_COUNT_LIMIT:
-                asyncio.create_task(ws.close(code=WS_NOT_ACKNOWLEDGED,
-                                             status="transactions_not_acknowledged"))
+                asyncio.create_task(
+                    ws.close(code=WS_NOT_ACKNOWLEDGED, status="transactions_not_acknowledged")
+                )
                 return
             elif queue.contains_pdus and self.should_wakeup(az):
                 await self.wakeup_appservice(az)
@@ -333,9 +365,13 @@ class AppServiceWebsocketHandler:
         finally:
             queue.stop_consuming(consumer_id)
 
-    def should_wakeup(self, az: AppService, only_if_ws_timeout: bool = False,
-                      min_time_since_last_push: int = MIN_WAKEUP_PUSH_DELAY,
-                      min_time_since_ws_message: int = RETRY_SEND_TIMEOUT) -> bool:
+    def should_wakeup(
+        self,
+        az: AppService,
+        only_if_ws_timeout: bool = False,
+        min_time_since_last_push: int = MIN_WAKEUP_PUSH_DELAY,
+        min_time_since_ws_message: int = RETRY_SEND_TIMEOUT,
+    ) -> bool:
         if not az.push_key:
             return False
         now = time.time()
@@ -361,16 +397,18 @@ class AppServiceWebsocketHandler:
                 if not 200 <= resp.status < 300:
                     text = await resp.text()
                     text = text.replace("\n", "\\n")
-                    self.log.warning(f"Unexpected status code {resp.status} "
-                                     f"trying to wake up {az.name}: {text}")
+                    self.log.warning(
+                        f"Unexpected status code {resp.status} trying to wake up {az.name}: {text}"
+                    )
                 else:
                     try:
                         data = await resp.json(content_type=None)
                     except json.JSONDecodeError:
                         text = await resp.text()
                         text = text.replace("\n", "\\n")
-                        self.log.warning(f"Unexpected response trying to wake up {az.name}: "
-                                         f"{text}")
+                        self.log.warning(
+                            f"Unexpected response trying to wake up {az.name}: {text}"
+                        )
                     else:
                         if az.push_key.pushkey in data.get("rejected", {}):
                             self.log.warning(f"Sygnal rejected wakeup push for {az.name}")
@@ -389,14 +427,17 @@ class AppServiceWebsocketHandler:
         try:
             ws = self.websockets[az.id]
         except KeyError:
-            self.log.warning(f"Not sending syncproxy error {txn_id} to {az.name}: "
-                             f"websocket not connected")
+            self.log.warning(
+                f"Not sending syncproxy error {txn_id} to {az.name}: websocket not connected"
+            )
             return "websocket-not-connected"
         self.log.debug(f"Sending transaction {txn_id} to {az.name} via websocket")
         try:
             if ws.proto >= 2:
-                await asyncio.wait_for(ws.request("syncproxy_error", txn_id=txn_id, **data),
-                                       timeout=RETRY_SEND_TIMEOUT)
+                await asyncio.wait_for(
+                    ws.request("syncproxy_error", txn_id=txn_id, **data),
+                    timeout=RETRY_SEND_TIMEOUT,
+                )
             else:
                 # Legacy API where client doesn't send acknowledgements
                 await ws.send(raise_errors=True, command="transaction", **data)

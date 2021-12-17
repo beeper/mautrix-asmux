@@ -1,14 +1,13 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Any, ClassVar, Optional, AsyncIterator
+from typing import Any, AsyncIterator, ClassVar, Optional
 from contextlib import asynccontextmanager
 import time
 
-import aiohttp
 from attr import dataclass
-
 from mautrix.api import HTTPAPI
 from mautrix.types import SerializableAttrs, field
+import aiohttp
 
 
 @dataclass
@@ -24,9 +23,11 @@ class PushKey(SerializableAttrs):
     @asynccontextmanager
     async def push(self, **data: Any) -> AsyncIterator[aiohttp.ClientResponse]:
         if self._sess is None:
-            self.__class__._sess = aiohttp.ClientSession(headers={
-                "User-Agent": HTTPAPI.default_ua,
-            })
+            self.__class__._sess = aiohttp.ClientSession(
+                headers={
+                    "User-Agent": HTTPAPI.default_ua,
+                }
+            )
 
         payload = {
             "notification": {

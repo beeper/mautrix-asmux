@@ -1,10 +1,10 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Iterable, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, List, Optional
 from contextlib import asynccontextmanager
 import asyncio
 
-from mautrix.types import DeviceLists, JSON
+from mautrix.types import JSON, DeviceLists
 
 from ..database import AppService
 from .as_proxy import Events
@@ -23,7 +23,7 @@ next_consumer_id = 0
 
 class AppServiceQueue:
     az: AppService
-    ws: 'AppServiceWebsocketHandler'
+    ws: "AppServiceWebsocketHandler"
     owner: str
     max_pdu_age_ms: int
     loop: asyncio.AbstractEventLoop
@@ -33,7 +33,7 @@ class AppServiceQueue:
     _consumer_id: Optional[int]
     _cleanup_task: Optional[asyncio.Task]
 
-    def __init__(self, az: AppService, ws: 'AppServiceWebsocketHandler') -> None:
+    def __init__(self, az: AppService, ws: "AppServiceWebsocketHandler") -> None:
         self.az = az
         self.ws = ws
         self.owner = f"@{self.az.owner}{ws.mxid_suffix}"
@@ -110,8 +110,10 @@ class AppServiceQueue:
 
     @property
     def contains_pdus(self) -> bool:
-        return bool((self._current_txn and self._current_txn.pdu)
-                    or (self._next_txn and self._next_txn.pdu))
+        return bool(
+            (self._current_txn and self._current_txn.pdu)
+            or (self._next_txn and self._next_txn.pdu)
+        )
 
     def pop_expired_pdu(self) -> List[JSON]:
         expired = []

@@ -1,24 +1,23 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Callable, Awaitable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 from uuid import UUID
-import logging
 import base64
-import json
 import copy
 import io
+import json
+import logging
 import re
 
+from aiohttp import ClientSession, web
+from mautrix.client import ClientAPI
+from mautrix.types import JSON, RoomID
+from mautrix.util.config import RecursiveDict, yaml
 from ruamel.yaml.comments import CommentedMap
-from aiohttp import web, ClientSession
 from yarl import URL
 
-from mautrix.types import JSON, RoomID
-from mautrix.client import ClientAPI
-from mautrix.util.config import yaml, RecursiveDict
-
-from ..database import AppService, User, Room
 from ..config import Config
+from ..database import AppService, Room, User
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -48,7 +47,7 @@ def custom_dumps(*args, **kwargs):
 class ManagementAPI:
     log: logging.Logger = logging.getLogger("mau.api.management")
     http: ClientSession
-    server: 'MuxServer'
+    server: "MuxServer"
 
     global_prefix: str
     exclusive: bool
@@ -65,7 +64,7 @@ class ManagementAPI:
     public_app: web.Application
     websocket_app: web.Application
 
-    def __init__(self, config: Config, http: ClientSession, server: 'MuxServer') -> None:
+    def __init__(self, config: Config, http: ClientSession, server: "MuxServer") -> None:
         self.global_prefix = config["appservice.namespace.prefix"]
         self.exclusive = config["appservice.namespace.exclusive"]
         self.server_name = config["homeserver.domain"]
@@ -113,15 +112,16 @@ class ManagementAPI:
             "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
         }
 
-    async def _check_auth_generic(self, req: web.Request, handler: Handler, callback: AuthCallback
-                                  ) -> web.Response:
+    async def _check_auth_generic(
+        self, req: web.Request, handler: Handler, callback: AuthCallback
+    ) -> web.Response:
         if req.method == "OPTIONS":
             return web.Response(headers=self._cors)
         try:
             auth = req.headers["Authorization"]
             if not auth.startswith("Bearer "):
                 raise Error.invalid_auth_header
-            auth = auth[len("Bearer "):]
+            auth = auth[len("Bearer ") :]
         except KeyError:
             raise Error.missing_auth_header
         if auth == self.shared_secret:
@@ -133,16 +133,20 @@ class ManagementAPI:
         resp.headers.update(self._cors)
         return resp
 
-    async def _check_auth_websocket(self, req: web.Request, handler: Handler,
-                                    callback: AuthCallback, prefix: str = "com.beeper.asmux.auth-"
-                                    ) -> web.Response:
+    async def _check_auth_websocket(
+        self,
+        req: web.Request,
+        handler: Handler,
+        callback: AuthCallback,
+        prefix: str = "com.beeper.asmux.auth-",
+    ) -> web.Response:
         if req.method == "OPTIONS":
             return web.Response(headers=self._cors)
         try:
             for proto in req.headers["Sec-WebSocket-Protocol"].split(","):
                 proto = proto.strip()
                 if proto.startswith(prefix):
-                    auth = proto[len(prefix):]
+                    auth = proto[len(prefix) :]
                     break
             else:
                 raise Error.invalid_auth_header
@@ -183,8 +187,12 @@ class ManagementAPI:
     async def check_ws_auth(self, req: web.Request, handler: Handler) -> web.Response:
         return await self._check_auth_websocket(req, handler, self._normal_auth_callback)
 
-    def _make_registration(self, az: AppService, config_password: Optional[str] = None,
-                           config_password_lifetime: Optional[int] = None) -> JSON:
+    def _make_registration(
+        self,
+        az: AppService,
+        config_password: Optional[str] = None,
+        config_password_lifetime: Optional[int] = None,
+    ) -> JSON:
         prefix = f"{re.escape(self.global_prefix)}{re.escape(az.owner)}_{re.escape(az.prefix)}"
         server_name = re.escape(self.server_name)
         registration = {
@@ -197,14 +205,18 @@ class ManagementAPI:
                 "login_shared_secret": az.login_token,
             },
             "namespaces": {
-                "users": [{
-                    "regex": f"@{prefix}_.+:{server_name}",
-                    "exclusive": self.exclusive,
-                }],
-                "aliases": [{
-                    "regex": f"#{prefix}_.+:{server_name}",
-                    "exclusive": self.exclusive,
-                }],
+                "users": [
+                    {
+                        "regex": f"@{prefix}_.+:{server_name}",
+                        "exclusive": self.exclusive,
+                    }
+                ],
+                "aliases": [
+                    {
+                        "regex": f"#{prefix}_.+:{server_name}",
+                        "exclusive": self.exclusive,
+                    }
+                ],
             },
             "url": az.address,
             "sender_localpart": f"{self.global_prefix}{az.owner}_{az.prefix}_{az.bot}",
@@ -329,9 +341,9 @@ class ManagementAPI:
     async def _register_as_bot(self, az: AppService) -> None:
         localpart = f"{self.global_prefix}{az.owner}_{az.prefix}_{az.bot}"
         url = (self.hs_address / "_matrix/client/r0/register").with_query({"kind": "user"})
-        await self.http.post(url, json={"username": localpart}, headers={
-            "Authorization": f"Bearer {self.as_token}"
-        })
+        await self.http.post(
+            url, json={"username": localpart}, headers={"Authorization": f"Bearer {self.as_token}"}
+        )
 
     async def provision_appservice(self, req: web.Request) -> web.Response:
         try:
@@ -354,16 +366,21 @@ class ManagementAPI:
                     raise Error.appservice_access_denied
             else:
                 user = await User.get_or_create(owner)
-            az = await AppService.find_or_create(user, prefix, bot=data.get("bot", "bot"),
-                                                 address=data.get("address", ""),
-                                                 push=data.get("push", True))
+            az = await AppService.find_or_create(
+                user,
+                prefix,
+                bot=data.get("bot", "bot"),
+                address=data.get("address", ""),
+                push=data.get("push", True),
+            )
             az.login_token = user.login_token
             if az.created_:
                 try:
                     await self._register_as_bot(az)
                 except Exception:
-                    self.log.warning(f"Failed to register bridge bot {owner}_{prefix}_{az.bot}",
-                                     exc_info=True)
+                    self.log.warning(
+                        f"Failed to register bridge bot {owner}_{prefix}_{az.bot}", exc_info=True
+                    )
                 self.log.info(f"Created appservice {az.name} ({az.id})")
         else:
             az = self._error_wrap(req, await AppService.get(uuid))
@@ -380,8 +397,9 @@ class ManagementAPI:
             config_password = await az.generate_password(lifetime)
         status = 201 if az.created_ else 200
         az.created_ = False
-        return web.json_response(self._make_registration(az, config_password, lifetime),
-                                 status=status)
+        return web.json_response(
+            self._make_registration(az, config_password, lifetime), status=status
+        )
 
     @staticmethod
     async def _authorize_config_download(req: web.Request) -> AppService:
@@ -391,9 +409,7 @@ class ManagementAPI:
             raise Error.missing_fields
         try:
             header = req.headers["Authorization"].removeprefix("Basic ")
-            username, password = (base64.b64decode(header)
-                                  .decode("utf-8")
-                                  .split(":", 1))
+            username, password = base64.b64decode(header).decode("utf-8").split(":", 1)
         except (KeyError, ValueError, TypeError):
             raise Error.invalid_auth_header
         az = await AppService.find(username, prefix)
@@ -407,10 +423,11 @@ class ManagementAPI:
         az = await self._authorize_config_download(req)
         new_password = await az.generate_password(lifetime=None)
         self.log.debug(f"Generated new config download password for {az.name}")
-        config_url = (self.public_address
-                      .with_path(f"/_matrix/asmux/public/config/{az.prefix}/download")
-                      .with_user(az.owner)
-                      .with_password(new_password))
+        config_url = (
+            self.public_address.with_path(f"/_matrix/asmux/public/config/{az.prefix}/download")
+            .with_user(az.owner)
+            .with_password(new_password)
+        )
         return web.Response(status=303, headers={"Location": str(config_url)})
 
     def _configure_imessage(self, az: AppService) -> str:
@@ -425,8 +442,9 @@ class ManagementAPI:
         config["appservice.as_token"] = az.real_as_token
         config["appservice.hs_token"] = az.hs_token
         config["bridge.user"] = f"@{az.owner}:{self.server_name}"
-        config["bridge.username_template"] = (f"{self.namespace_prefix}{az.owner}_{az.prefix}_"
-                                              "{{.}}")
+        config["bridge.username_template"] = (
+            f"{self.namespace_prefix}{az.owner}_{az.prefix}_" "{{.}}"
+        )
         config["bridge.login_shared_secret"] = az.login_token
         with io.StringIO() as output:
             yaml.dump(config._data, output)
@@ -434,5 +452,6 @@ class ManagementAPI:
 
     async def download_config(self, req: web.Request) -> web.Response:
         az = await self._authorize_config_download(req)
-        return web.Response(status=200, content_type="text/yaml",
-                            body=self._configure_imessage(az))
+        return web.Response(
+            status=200, content_type="text/yaml", body=self._configure_imessage(az)
+        )

@@ -36,7 +36,7 @@ def is_double_puppeted(event: JSON) -> bool:
     return False
 
 
-def should_forward_pdu(az: 'AppService', event: JSON, mxid_suffix: str) -> bool:
+def should_forward_pdu(az: "AppService", event: JSON, mxid_suffix: str) -> bool:
     return (
         event.get("type") in CHECKPOINT_TYPES_STR
         and (not az or event.get("sender") == f"@{az.owner}{mxid_suffix}")

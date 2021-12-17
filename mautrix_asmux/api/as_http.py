@@ -1,20 +1,21 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-import logging
 import asyncio
 import json
+import logging
 import time
 
-from yarl import URL
 from aiohttp import ClientError, ClientTimeout, ContentTypeError
-import aiohttp
-
 from mautrix.api import HTTPAPI
 from mautrix.util.bridge_state import GlobalBridgeState
 from mautrix.util.message_send_checkpoint import (
-    MessageSendCheckpoint, MessageSendCheckpointStep, MessageSendCheckpointReportedBy,
-    MessageSendCheckpointStatus
+    MessageSendCheckpoint,
+    MessageSendCheckpointReportedBy,
+    MessageSendCheckpointStatus,
+    MessageSendCheckpointStep,
 )
+from yarl import URL
+import aiohttp
 
 from ..database import AppService
 from .as_proxy import Events, make_ping_error, migrate_state_data, send_message_checkpoints
@@ -29,25 +30,30 @@ class AppServiceHTTPHandler:
     def __init__(self, mxid_suffix: str, checkpoint_url: str, http: aiohttp.ClientSession) -> None:
         self.mxid_suffix = mxid_suffix
         self.http = http
-        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5),
-                                                     headers={"User-Agent": HTTPAPI.default_ua})
+        self.api_server_sess = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5), headers={"User-Agent": HTTPAPI.default_ua}
+        )
         self.checkpoint_url = checkpoint_url
 
     async def post_events(self, az: AppService, events: Events) -> str:
         attempt = 0
         url = URL(az.address) / "_matrix/app/v1/transactions" / events.txn_id
-        err_prefix = (f"Failed to send transaction {events.txn_id} "
-                      f"({len(events.pdu)}p/{len(events.edu)}e) to {url}")
+        err_prefix = (
+            f"Failed to send transaction {events.txn_id} "
+            f"({len(events.pdu)}p/{len(events.edu)}e) to {url}"
+        )
         retries = 10 if len(events.pdu) > 0 else 2
         backoff = 1
         last_error = ""
         while attempt < retries:
             attempt += 1
-            self.log.debug(f"Sending transaction {events.txn_id} to {az.name} "
-                           f"via HTTP, attempt #{attempt}")
+            self.log.debug(
+                f"Sending transaction {events.txn_id} to {az.name} via HTTP, attempt #{attempt}"
+            )
             try:
-                resp = await self.http.put(url.with_query({"access_token": az.hs_token}),
-                                           json=events.serialize())
+                resp = await self.http.put(
+                    url.with_query({"access_token": az.hs_token}), json=events.serialize()
+                )
             except ClientError as e:
                 last_error = e
                 self.log.debug(f"{err_prefix}: {last_error}")
@@ -66,18 +72,34 @@ class AppServiceHTTPHandler:
                 # The first few attempts only have a few seconds of backoff,
                 # so let's not spam checkpoints for those.
                 if attempt > 3:
-                    self.report_error(az, events, MessageSendCheckpointStatus.WILL_RETRY,
-                                      info=str(last_error), retry_num=attempt - 1)
+                    self.report_error(
+                        az,
+                        events,
+                        MessageSendCheckpointStatus.WILL_RETRY,
+                        info=str(last_error),
+                        retry_num=attempt - 1,
+                    )
                 await asyncio.sleep(backoff)
                 backoff *= 1.5
         last_error = f" (last error: {last_error})" if last_error else ""
-        self.report_error(az, events, MessageSendCheckpointStatus.PERM_FAILURE,
-                          info=last_error.strip(), retry_num=attempt - 1)
+        self.report_error(
+            az,
+            events,
+            MessageSendCheckpointStatus.PERM_FAILURE,
+            info=last_error.strip(),
+            retry_num=attempt - 1,
+        )
         self.log.warning(f"Gave up trying to send {events.txn_id} to {az.name}" + last_error)
         return "http-gave-up"
 
-    def report_error(self, az: AppService, txn: Events, status: MessageSendCheckpointStatus,
-                     info: str = "", retry_num: int = 0) -> None:
+    def report_error(
+        self,
+        az: AppService,
+        txn: Events,
+        status: MessageSendCheckpointStatus,
+        info: str = "",
+        retry_num: int = 0,
+    ) -> None:
         if not txn.pdu:
             return
         checkpoints = [
@@ -97,11 +119,13 @@ class AppServiceHTTPHandler:
         asyncio.create_task(send_message_checkpoints(self, az, {"checkpoints": checkpoints}))
 
     async def ping(self, az: AppService) -> GlobalBridgeState:
-        url = (URL(az.address) / "_matrix/app/com.beeper.bridge_state").with_query({
-            "user_id": f"@{az.owner}{self.mxid_suffix}",
-            # TODO remove after making sure it's safe to remove
-            "remote_id": "",
-        })
+        url = (URL(az.address) / "_matrix/app/com.beeper.bridge_state").with_query(
+            {
+                "user_id": f"@{az.owner}{self.mxid_suffix}",
+                # TODO remove after making sure it's safe to remove
+                "remote_id": "",
+            }
+        )
         headers = {"Authorization": f"Bearer {az.hs_token}"}
         try:
             resp = await self.http.post(url, headers=headers, timeout=ClientTimeout(total=45))
@@ -116,7 +140,9 @@ class AppServiceHTTPHandler:
             raw_pong = await resp.json()
         except (json.JSONDecodeError, ContentTypeError):
             if resp.status >= 300:
-                return make_ping_error(f"ping-http-{resp.status}",
-                                       f"Ping returned non-JSON body and HTTP {resp.status}")
+                return make_ping_error(
+                    f"ping-http-{resp.status}",
+                    f"Ping returned non-JSON body and HTTP {resp.status}",
+                )
             return make_ping_error("http-not-json")
         return GlobalBridgeState.deserialize(migrate_state_data(raw_pong))

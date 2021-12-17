@@ -1,14 +1,18 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Dict, ClassVar, TypedDict
+from typing import ClassVar, Dict, Optional, TypedDict
+import json
 import logging
 import secrets
-import json
 
-from cryptography.hazmat.primitives.serialization import (Encoding, PrivateFormat, PublicFormat,
-                                                          BestAvailableEncryption)
+from attr import asdict, dataclass
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from attr import dataclass, asdict
+from cryptography.hazmat.primitives.serialization import (
+    BestAvailableEncryption,
+    Encoding,
+    PrivateFormat,
+    PublicFormat,
+)
 import asyncpg
 
 from .base import Base
@@ -50,8 +54,8 @@ class User(Base):
     login_token: str
     proxy_config: Optional[ProxyConfig]
 
-    cache_by_id: ClassVar[Dict[str, 'User']] = {}
-    cache_by_api_token: ClassVar[Dict[str, 'User']] = {}
+    cache_by_id: ClassVar[Dict[str, "User"]] = {}
+    cache_by_api_token: ClassVar[Dict[str, "User"]] = {}
 
     def __attrs_post_init__(self) -> None:
         if self.proxy_config and isinstance(self.proxy_config, str):
@@ -61,7 +65,7 @@ class User(Base):
         del self.cache_by_id[self.id]
         del self.cache_by_api_token[self.api_token]
 
-    def _add_to_cache(self) -> 'User':
+    def _add_to_cache(self) -> "User":
         self.cache_by_id[self.id] = self
         self.cache_by_api_token[self.api_token] = self
         return self
@@ -96,8 +100,11 @@ class User(Base):
     def generate_ssh_key(self) -> SSHKey:
         key = Ed25519PrivateKey.generate()
         passphrase = secrets.token_urlsafe(48)
-        privkey = key.private_bytes(Encoding.PEM, PrivateFormat.OpenSSH,
-                                    BestAvailableEncryption(passphrase.encode("utf-8")))
+        privkey = key.private_bytes(
+            Encoding.PEM,
+            PrivateFormat.OpenSSH,
+            BestAvailableEncryption(passphrase.encode("utf-8")),
+        )
         pubkey = key.public_key().public_bytes(Encoding.OpenSSH, PublicFormat.OpenSSH)
         return {
             "publicKey": pubkey.decode("utf-8"),
@@ -106,31 +113,34 @@ class User(Base):
         }
 
     @classmethod
-    async def get(cls, id: str, *, conn: Optional[asyncpg.Connection] = None
-                  ) -> Optional['User']:
+    async def get(cls, id: str, *, conn: Optional[asyncpg.Connection] = None) -> Optional["User"]:
         try:
             return cls.cache_by_id[id]
         except KeyError:
             pass
         conn = conn or cls.db
-        row = await conn.fetchrow('SELECT id, api_token, login_token, proxy_config '
-                                  'FROM "user" WHERE id=$1', id)
+        row = await conn.fetchrow(
+            "SELECT id, api_token, login_token, proxy_config " 'FROM "user" WHERE id=$1', id
+        )
         return User(**row)._add_to_cache() if row else None
 
     @classmethod
-    async def find_by_api_token(cls, api_token: str, *, conn: Optional[asyncpg.Connection] = None
-                                ) -> Optional['User']:
+    async def find_by_api_token(
+        cls, api_token: str, *, conn: Optional[asyncpg.Connection] = None
+    ) -> Optional["User"]:
         try:
             return cls.cache_by_api_token[api_token]
         except KeyError:
             pass
         conn = conn or cls.db
-        row = await conn.fetchrow('SELECT id, api_token, login_token, proxy_config '
-                                  'FROM "user" WHERE api_token=$1', api_token)
+        row = await conn.fetchrow(
+            "SELECT id, api_token, login_token, proxy_config " 'FROM "user" WHERE api_token=$1',
+            api_token,
+        )
         return User(**row)._add_to_cache() if row else None
 
     @classmethod
-    async def get_or_create(cls, id: str) -> 'User':
+    async def get_or_create(cls, id: str) -> "User":
         try:
             return cls.cache_by_id[id]
         except KeyError:
@@ -138,22 +148,37 @@ class User(Base):
         async with cls.db.acquire() as conn, conn.transaction():
             user = await cls.get(id, conn=conn)
             if not user:
-                user = User(id=id, api_token=secrets.token_urlsafe(48),
-                            login_token=secrets.token_urlsafe(48), proxy_config=None)
+                user = User(
+                    id=id,
+                    api_token=secrets.token_urlsafe(48),
+                    login_token=secrets.token_urlsafe(48),
+                    proxy_config=None,
+                )
                 await user.insert(conn=conn)
             return user
 
     async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
         conn = conn or self.db
-        q = ('INSERT INTO "user" (id, api_token, login_token, proxy_config) '
-             'VALUES ($1, $2, $3, $4)')
-        await conn.execute(q, self.id, self.api_token, self.login_token,
-                           json.dumps(self.proxy_config) if self.proxy_config else None)
+        q = (
+            'INSERT INTO "user" (id, api_token, login_token, proxy_config) '
+            "VALUES ($1, $2, $3, $4)"
+        )
+        await conn.execute(
+            q,
+            self.id,
+            self.api_token,
+            self.login_token,
+            json.dumps(self.proxy_config) if self.proxy_config else None,
+        )
         self._add_to_cache()
         self.log.info(f"Created user {self.id}")
 
-    async def edit(self, proxy_config: Optional[ProxyConfig] = unset, *,
-                   conn: Optional[asyncpg.Connection] = None) -> None:
+    async def edit(
+        self,
+        proxy_config: Optional[ProxyConfig] = unset,
+        *,
+        conn: Optional[asyncpg.Connection] = None,
+    ) -> None:
         conn = conn or self.db
         if proxy_config is unset:
             proxy_config = self.proxy_config

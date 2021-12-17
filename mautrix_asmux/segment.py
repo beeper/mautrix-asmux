@@ -1,20 +1,21 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Dict, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Optional
 from collections import defaultdict
-import logging
 import asyncio
+import logging
 import time
 
-import aiohttp
 from yarl import URL
+import aiohttp
 
 from .util import is_double_puppeted
 
 if TYPE_CHECKING:
     from mautrix.types import JSON
-    from .database import AppService
+
     from .api.as_proxy import Events
+    from .database import AppService
 
 log = logging.getLogger("mau.segment")
 token: Optional[str] = None
@@ -37,17 +38,21 @@ async def _track(event: str, user_id: str, **properties: str) -> None:
         properties["counter_matrix_event"] = str(matrix_count)
         if matrix_count or remote_count:
             properties["counter_matrix_share"] = str(matrix_count / (matrix_count + remote_count))
-        await http.post(URL.build(scheme="https", host=host, path="/v1/track"), json={
-            "userId": user_id,
-            "event": event,
-            "properties": properties,
-        }, auth=aiohttp.BasicAuth(login=token, encoding="utf-8"))
+        await http.post(
+            URL.build(scheme="https", host=host, path="/v1/track"),
+            json={
+                "userId": user_id,
+                "event": event,
+                "properties": properties,
+            },
+            auth=aiohttp.BasicAuth(login=token, encoding="utf-8"),
+        )
         log.debug(f"Tracked {event} from {user_id} with {properties}")
     except Exception:
         log.exception(f"Failed to track {event} from {user_id}")
 
 
-def _get_tracking_event_type(appservice: 'AppService', event: 'JSON') -> Optional[str]:
+def _get_tracking_event_type(appservice: "AppService", event: "JSON") -> Optional[str]:
     limit = int(time.time() * 1000) - 5 * 60 * 1000
     if event.get("origin_server_ts", limit) < limit:
         return None  # message is too old
@@ -66,22 +71,30 @@ def _get_tracking_event_type(appservice: 'AppService', event: 'JSON') -> Optiona
     return "Outgoing Matrix event"
 
 
-def track_event(az: 'AppService', pdu: 'JSON') -> None:
+def track_event(az: "AppService", pdu: "JSON") -> None:
     if not token:
         return
     event_type = _get_tracking_event_type(az, pdu)
     if event_type:
-        asyncio.create_task(_track(event_type, pdu["sender"], network=az.prefix,
-                                   bridge_type=az.prefix, bridge_id=str(az.id)))
+        asyncio.create_task(
+            _track(
+                event_type,
+                pdu["sender"],
+                network=az.prefix,
+                bridge_type=az.prefix,
+                bridge_id=str(az.id),
+            )
+        )
 
 
-def track_events(az: 'AppService', events: 'Events') -> None:
+def track_events(az: "AppService", events: "Events") -> None:
     for event in events.pdu:
         track_event(az, event)
 
 
-def init(input_token: str, input_host: str, input_mxid_suffix: str, session: aiohttp.ClientSession
-         ) -> None:
+def init(
+    input_token: str, input_host: str, input_mxid_suffix: str, session: aiohttp.ClientSession
+) -> None:
     global token, host, http, mxid_suffix
     token = input_token
     host = input_host

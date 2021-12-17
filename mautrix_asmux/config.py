@@ -1,12 +1,17 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 import random
-import string
 import re
+import string
 
-from mautrix.util.config import (BaseFileConfig, BaseValidatableConfig, ConfigUpdateHelper,
-                                 ForbiddenDefault, yaml)
+from mautrix.util.config import (
+    BaseFileConfig,
+    BaseValidatableConfig,
+    ConfigUpdateHelper,
+    ForbiddenDefault,
+    yaml,
+)
 
 
 class Config(BaseFileConfig, BaseValidatableConfig):
@@ -32,16 +37,22 @@ class Config(BaseFileConfig, BaseValidatableConfig):
 
     @property
     def forbidden_defaults(self) -> List[ForbiddenDefault]:
-        return [
-            ForbiddenDefault("homeserver.domain", "example.com"),
-        ] + ([
-            ForbiddenDefault("appservice.as_token",
-                             "This value is generated when generating the registration",
-                             "Did you forget to generate the registration?"),
-            ForbiddenDefault("appservice.hs_token",
-                             "This value is generated when generating the registration",
-                             "Did you forget to generate the registration?"),
-        ] if self._check_tokens else [])
+        return [ForbiddenDefault("homeserver.domain", "example.com"),] + (
+            [
+                ForbiddenDefault(
+                    "appservice.as_token",
+                    "This value is generated when generating the registration",
+                    "Did you forget to generate the registration?",
+                ),
+                ForbiddenDefault(
+                    "appservice.hs_token",
+                    "This value is generated when generating the registration",
+                    "Did you forget to generate the registration?",
+                ),
+            ]
+            if self._check_tokens
+            else []
+        )
 
     def do_update(self, helper: ConfigUpdateHelper) -> None:
         copy, copy_dict, base = helper
@@ -103,14 +114,18 @@ class Config(BaseFileConfig, BaseValidatableConfig):
             "as_token": self["appservice.as_token"],
             "hs_token": self["appservice.hs_token"],
             "namespaces": {
-                "users": [{
-                    "regex": f"@{prefix}.+:{server_name}",
-                    "exclusive": exclusive,
-                }],
-                "aliases": [{
-                    "regex": f"#{prefix}.+:{server_name}",
-                    "exclusive": exclusive,
-                }]
+                "users": [
+                    {
+                        "regex": f"@{prefix}.+:{server_name}",
+                        "exclusive": exclusive,
+                    }
+                ],
+                "aliases": [
+                    {
+                        "regex": f"#{prefix}.+:{server_name}",
+                        "exclusive": exclusive,
+                    }
+                ],
             },
             "url": self["appservice.address"],
             "sender_localpart": self["appservice.bot_username"],

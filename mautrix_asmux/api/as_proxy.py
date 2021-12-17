@@ -1,66 +1,70 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Optional, Any, Awaitable, Union, List, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Awaitable, List, Optional, Tuple, Union
 from collections import defaultdict
 from uuid import UUID
-import logging
 import asyncio
+import logging
 import time
 
-from attr import dataclass
 from aiohttp import web
-import aiohttp
-import attr
-
+from attr import dataclass
 from mautrix.api import HTTPAPI
-from mautrix.types import JSON, DeviceOTKCount, DeviceLists, UserID
 from mautrix.appservice import AppServiceServerMixin
-from mautrix.util.opt_prometheus import Counter
+from mautrix.types import JSON, DeviceLists, DeviceOTKCount, UserID
+from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
 from mautrix.util.logging import TraceLogger
-from mautrix.util.bridge_state import BridgeStateEvent, GlobalBridgeState, BridgeState
 from mautrix.util.message_send_checkpoint import (
     MessageSendCheckpoint,
     MessageSendCheckpointReportedBy,
     MessageSendCheckpointStatus,
     MessageSendCheckpointStep,
 )
+from mautrix.util.opt_prometheus import Counter
+import aiohttp
+import attr
 
-from ..database import Room, AppService
-from ..segment import track_events, track_event
-from ..util import should_forward_pdu, is_double_puppeted
+from ..database import AppService, Room
+from ..segment import track_event, track_events
+from ..util import is_double_puppeted, should_forward_pdu
 from .errors import Error
 
 if TYPE_CHECKING:
     from ..server import MuxServer
-    from .as_websocket import AppServiceWebsocketHandler
     from .as_http import AppServiceHTTPHandler
+    from .as_websocket import AppServiceWebsocketHandler
 
-    CheckpointSender = Union['AppServiceProxy', AppServiceWebsocketHandler, AppServiceHTTPHandler]
+    CheckpointSender = Union["AppServiceProxy", AppServiceWebsocketHandler, AppServiceHTTPHandler]
 
 BridgeState.default_source = "asmux"
-BridgeState.human_readable_errors.update({
-    "ping-no-remote": "Couldn't make ping: no address configured",
-    "websocket-not-connected": "The bridge is not connected to the server",
-    "io-timeout": "Timeout while waiting for ping response",
-    "http-connection-error": "HTTP client error while pinging: {message}",
-    "ping-fatal-error": "Fatal error while pinging: {message}",
-    "websocket-fatal-error": "Fatal error while pinging through websocket: {message}",
-    "http-fatal-error": "Fatal error while pinging through HTTP: {message}",
-    "http-not-json": "Non-JSON ping response",
-})
+BridgeState.human_readable_errors.update(
+    {
+        "ping-no-remote": "Couldn't make ping: no address configured",
+        "websocket-not-connected": "The bridge is not connected to the server",
+        "io-timeout": "Timeout while waiting for ping response",
+        "http-connection-error": "HTTP client error while pinging: {message}",
+        "ping-fatal-error": "Fatal error while pinging: {message}",
+        "websocket-fatal-error": "Fatal error while pinging through websocket: {message}",
+        "http-fatal-error": "Fatal error while pinging through HTTP: {message}",
+        "http-not-json": "Non-JSON ping response",
+    }
+)
 
 
-def make_ping_error(error: str, message: Optional[str] = None,
-                    state_event: BridgeStateEvent = BridgeStateEvent.BRIDGE_UNREACHABLE
-                    ) -> GlobalBridgeState:
+def make_ping_error(
+    error: str,
+    message: Optional[str] = None,
+    state_event: BridgeStateEvent = BridgeStateEvent.BRIDGE_UNREACHABLE,
+) -> GlobalBridgeState:
     state_event = BridgeState(state_event=state_event, error=error, message=message)
     return GlobalBridgeState(remote_states=None, bridge_state=state_event)
 
 
 def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> dict[str, Any]:
     if "ok" in raw_pong and "state_event" not in raw_pong:
-        raw_pong["state_event"] = (BridgeStateEvent.CONNECTED if raw_pong["ok"]
-                                   else BridgeStateEvent.UNKNOWN_ERROR)
+        raw_pong["state_event"] = (
+            BridgeStateEvent.CONNECTED if raw_pong["ok"] else BridgeStateEvent.UNKNOWN_ERROR
+        )
     if is_global and "remoteState" not in raw_pong:
         raw_pong = {
             "remoteState": {
@@ -74,7 +78,7 @@ def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> dict
     return raw_pong
 
 
-async def send_message_checkpoints(self: 'CheckpointSender', az: AppService, data: JSON) -> None:
+async def send_message_checkpoints(self: "CheckpointSender", az: AppService, data: JSON) -> None:
     url = f"{self.checkpoint_url}/bridgebox/{az.owner}/bridge/{az.prefix}/send_message_metrics"
     headers = {"Authorization": f"Bearer {az.real_as_token}"}
     try:
@@ -82,8 +86,10 @@ async def send_message_checkpoints(self: 'CheckpointSender', az: AppService, dat
             if not 200 <= resp.status < 300:
                 text = await resp.text()
                 text = text.replace("\n", "\\n")
-                self.log.warning(f"Unexpected status code {resp.status} sending message send"
-                                 f" checkpoints for {az.name}: {text}")
+                self.log.warning(
+                    f"Unexpected status code {resp.status} sending message send"
+                    f" checkpoints for {az.name}: {text}"
+                )
     except Exception as e:
         self.log.warning(f"Failed to send message send checkpoints for {az.name}: {e}")
 
@@ -98,22 +104,26 @@ class Events:
     device_lists: DeviceLists = attr.ib(factory=lambda: DeviceLists(changed=[], left=[]))
 
     def serialize(self) -> dict[str, Any]:
-        output = {
-            "events": self.pdu
-        }
+        output = {"events": self.pdu}
         if self.edu:
             output["ephemeral"] = self.edu
         if self.otk_count:
-            output["device_one_time_keys_count"] = {user_id: otk.serialize()
-                                                    for user_id, otk in self.otk_count.items()}
+            output["device_one_time_keys_count"] = {
+                user_id: otk.serialize() for user_id, otk in self.otk_count.items()
+            }
         if self.device_lists.changed or self.device_lists.left:
             output["device_lists"] = self.device_lists.serialize()
         return output
 
     @property
     def is_empty(self) -> bool:
-        return (not self.pdu and not self.edu and not self.otk_count
-                and not self.device_lists.changed and not self.device_lists.left)
+        return (
+            not self.pdu
+            and not self.edu
+            and not self.otk_count
+            and not self.device_lists.changed
+            and not self.device_lists.left
+        )
 
     def pop_expired_pdu(self, owner: str, max_age: int) -> List[JSON]:
         now = int(time.time() * 1000)
@@ -131,19 +141,27 @@ class Events:
         return filtered
 
 
-RECEIVED_EVENTS = Counter("asmux_received_events", "Number of incoming events",
-                          labelnames=["type"])
-DROPPED_EVENTS = Counter("asmux_dropped_events", "Number of dropped events",
-                         labelnames=["type", "reason"])
-ACCEPTED_EVENTS = Counter("asmux_accepted_events",
-                          "Number of events that have a target appservice",
-                          labelnames=["owner", "bridge", "type"])
-SUCCESSFUL_EVENTS = Counter("asmux_successful_events",
-                            "Number of PDUs that were successfully sent to the target appservice",
-                            labelnames=["owner", "bridge", "type"])
-FAILED_EVENTS = Counter("asmux_failed_events",
-                        "Number of PDUs that were successfully sent to the target appservice",
-                        labelnames=["owner", "bridge", "type"])
+RECEIVED_EVENTS = Counter(
+    "asmux_received_events", "Number of incoming events", labelnames=["type"]
+)
+DROPPED_EVENTS = Counter(
+    "asmux_dropped_events", "Number of dropped events", labelnames=["type", "reason"]
+)
+ACCEPTED_EVENTS = Counter(
+    "asmux_accepted_events",
+    "Number of events that have a target appservice",
+    labelnames=["owner", "bridge", "type"],
+)
+SUCCESSFUL_EVENTS = Counter(
+    "asmux_successful_events",
+    "Number of PDUs that were successfully sent to the target appservice",
+    labelnames=["owner", "bridge", "type"],
+)
+FAILED_EVENTS = Counter(
+    "asmux_failed_events",
+    "Number of PDUs that were successfully sent to the target appservice",
+    labelnames=["owner", "bridge", "type"],
+)
 
 
 class AppServiceProxy(AppServiceServerMixin):
@@ -157,8 +175,15 @@ class AppServiceProxy(AppServiceServerMixin):
     checkpoint_url: str
     api_server_sess: aiohttp.ClientSession
 
-    def __init__(self, server: 'MuxServer', mxid_prefix: str, mxid_suffix: str, hs_token: str,
-                 checkpoint_url: str, http: aiohttp.ClientSession) -> None:
+    def __init__(
+        self,
+        server: "MuxServer",
+        mxid_prefix: str,
+        mxid_suffix: str,
+        hs_token: str,
+        checkpoint_url: str,
+        http: aiohttp.ClientSession,
+    ) -> None:
         super().__init__(ephemeral_events=True)
         self.server = server
         self.mxid_prefix = mxid_prefix
@@ -167,8 +192,9 @@ class AppServiceProxy(AppServiceServerMixin):
         self.http = http
         self.locks = defaultdict(lambda: asyncio.Lock())
         self.checkpoint_url = checkpoint_url
-        self.api_server_sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5),
-                                                     headers={"User-Agent": HTTPAPI.default_ua})
+        self.api_server_sess = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5), headers={"User-Agent": HTTPAPI.default_ua}
+        )
 
     async def send_message_send_checkpoints(self, az: AppService, events: Events):
         if not self.checkpoint_url:
@@ -183,7 +209,7 @@ class AppServiceProxy(AppServiceServerMixin):
                 timestamp=event.get("origin_server_ts"),
                 status=MessageSendCheckpointStatus.SUCCESS,
                 event_type=event.get("type"),
-                reported_by=MessageSendCheckpointReportedBy.ASMUX
+                reported_by=MessageSendCheckpointReportedBy.ASMUX,
             )
 
             try:
@@ -216,8 +242,10 @@ class AppServiceProxy(AppServiceServerMixin):
                 self.server.as_websocket.queue_events(az, events)
                 return "ok"
             elif not az.address:
-                self.log.warning(f"Not sending transaction {events.txn_id} to {az.name}: "
-                                 f"no address configured")
+                self.log.warning(
+                    f"Not sending transaction {events.txn_id} to {az.name}: "
+                    f"no address configured"
+                )
                 return "no-address"
             try:
                 self.log.trace("Sending transaction to %s: %s", az.name, events)
@@ -257,10 +285,13 @@ class AppServiceProxy(AppServiceServerMixin):
         return pong
 
     async def _get_az_from_user_id(self, user_id: UserID) -> Optional[AppService]:
-        if ((not user_id or not user_id.startswith(self.mxid_prefix)
-             or not user_id.endswith(self.mxid_suffix))):
+        if (
+            not user_id
+            or not user_id.startswith(self.mxid_prefix)
+            or not user_id.endswith(self.mxid_suffix)
+        ):
             return None
-        localpart: str = user_id[len(self.mxid_prefix):-len(self.mxid_suffix)]
+        localpart: str = user_id[len(self.mxid_prefix) : -len(self.mxid_suffix)]
         try:
             owner, prefix, _ = localpart.split("_", 2)
         except ValueError:
@@ -269,8 +300,9 @@ class AppServiceProxy(AppServiceServerMixin):
 
     async def register_room(self, event: JSON) -> Tuple[Optional[Room], Optional[AppService]]:
         try:
-            if ((event["type"] != "m.room.member"
-                 or not event["state_key"].startswith(self.mxid_prefix))):
+            if event["type"] != "m.room.member" or not event["state_key"].startswith(
+                self.mxid_prefix
+            ):
                 return None, None
         except KeyError:
             return None, None
@@ -283,9 +315,10 @@ class AppServiceProxy(AppServiceServerMixin):
         await room.insert()
         return room, az
 
-    async def _collect_events(self, events: list[JSON], output: dict[UUID, Events], ephemeral: bool
-                              ) -> None:
-        for event in (events or []):
+    async def _collect_events(
+        self, events: list[JSON], output: dict[UUID, Events], ephemeral: bool
+    ) -> None:
+        for event in events or []:
             evt_type = event.get("type", "")
             RECEIVED_EVENTS.labels(type=evt_type).inc()
             room_id = event.get("room_id")
@@ -322,8 +355,9 @@ class AppServiceProxy(AppServiceServerMixin):
             #     TODO find all appservices that care about the sender's presence.
             #     pass
 
-    async def _collect_otk_count(self, otk_count: Optional[dict[UserID, DeviceOTKCount]],
-                                 output: dict[UUID, Events]) -> None:
+    async def _collect_otk_count(
+        self, otk_count: Optional[dict[UserID, DeviceOTKCount]], output: dict[UUID, Events]
+    ) -> None:
         if not otk_count:
             return
         for user_id, otk_count in otk_count.items():
@@ -332,14 +366,17 @@ class AppServiceProxy(AppServiceServerMixin):
                 # TODO metrics/logs for received OTK counts?
                 output[az.id].otk_count[user_id] = otk_count
 
-    async def _send_transactions(self, events: dict[UUID, Events], synchronous_to: list[str]
-                                 ) -> dict[str, Any]:
+    async def _send_transactions(
+        self, events: dict[UUID, Events], synchronous_to: list[str]
+    ) -> dict[str, Any]:
         wait_for: dict[UUID, Awaitable[str]] = {}
 
         for appservice_id, events in events.items():
             appservice = await AppService.get(appservice_id)
-            self.log.debug(f"Preparing to send {len(events.pdu)} PDUs and {len(events.edu)} EDUs "
-                           f"from transaction {events.txn_id} to {appservice.name}")
+            self.log.debug(
+                f"Preparing to send {len(events.pdu)} PDUs and {len(events.edu)} EDUs "
+                f"from transaction {events.txn_id} to {appservice.name}"
+            )
             task = asyncio.create_task(self.post_events(appservice, events))
             if str(appservice.id) in synchronous_to:
                 wait_for[appservice.id] = task
@@ -356,15 +393,24 @@ class AppServiceProxy(AppServiceServerMixin):
             "com.beeper.asmux.synchronous": True,
         }
 
-    async def handle_transaction(self, txn_id: str, *, events: list[JSON], extra_data: JSON,
-                                 ephemeral: Optional[list[JSON]] = None,
-                                 device_otk_count: Optional[dict[UserID, DeviceOTKCount]] = None,
-                                 device_lists: Optional[DeviceLists] = None) -> Any:
+    async def handle_transaction(
+        self,
+        txn_id: str,
+        *,
+        events: list[JSON],
+        extra_data: JSON,
+        ephemeral: Optional[list[JSON]] = None,
+        device_otk_count: Optional[dict[UserID, DeviceOTKCount]] = None,
+        device_lists: Optional[DeviceLists] = None,
+    ) -> Any:
         outgoing_txn_id = extra_data.get("fi.mau.syncproxy.transaction_id", txn_id)
-        log_txn_id = (txn_id if outgoing_txn_id == txn_id
-                      else f"{outgoing_txn_id} (wrapped in {txn_id})")
-        self.log.debug(f"Received transaction {log_txn_id} with {len(events or [])} PDUs "
-                       f"and {len(ephemeral or [])} EDUs")
+        log_txn_id = (
+            txn_id if outgoing_txn_id == txn_id else f"{outgoing_txn_id} (wrapped in {txn_id})"
+        )
+        self.log.debug(
+            f"Received transaction {log_txn_id} with {len(events or [])} PDUs "
+            f"and {len(ephemeral or [])} EDUs"
+        )
         synchronous_to = extra_data.get("com.beeper.asmux.synchronous_to", [])
         data: dict[UUID, Events] = defaultdict(lambda: Events(outgoing_txn_id))
 
@@ -395,8 +441,12 @@ class AppServiceProxy(AppServiceServerMixin):
         sent_to = {}
         async with self.locks[appservice.id]:
             try:
-                self.log.trace("Sending error transaction %s to %s: %s", outgoing_txn_id,
-                               appservice.name, data)
+                self.log.trace(
+                    "Sending error transaction %s to %s: %s",
+                    outgoing_txn_id,
+                    appservice.name,
+                    data,
+                )
                 if appservice.push:
                     raise Error.syncproxy_error_not_supported
                 sent_to[str(appservice_id)] = await self.server.as_websocket.post_syncproxy_error(
@@ -405,10 +455,14 @@ class AppServiceProxy(AppServiceServerMixin):
             except web.HTTPException:
                 raise
             except Exception:
-                self.log.exception("Fatal error sending syncproxy error transaction "
-                                   f"{outgoing_txn_id} to {appservice.name}")
+                self.log.exception(
+                    "Fatal error sending syncproxy error transaction "
+                    f"{outgoing_txn_id} to {appservice.name}"
+                )
         self.transactions.add(txn_id)
-        return web.json_response({
-            "com.beeper.asmux.sent_to": sent_to,
-            "com.beeper.asmux.synchronous": True,
-        })
+        return web.json_response(
+            {
+                "com.beeper.asmux.sent_to": sent_to,
+                "com.beeper.asmux.synchronous": True,
+            }
+        )
