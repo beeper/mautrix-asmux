@@ -218,6 +218,14 @@ class AppServiceProxy(AppServiceServerMixin):
                     step=MessageSendCheckpointStep.CLIENT,
                     timestamp=event["content"]["com.beeper.origin_client_ts"],
                 )
+                if "com.beeper.origin_client_type" in event["content"]:
+                    client_checkpoint.client_type = event["content"][
+                        "com.beeper.origin_client_type"
+                    ]
+                if "com.beeper.origin_client_version" in event["content"]:
+                    client_checkpoint.client_version = event["content"][
+                        "com.beeper.origin_client_version"
+                    ]
             except (KeyError, TypeError):
                 pass
             else:
