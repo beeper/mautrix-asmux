@@ -32,10 +32,20 @@ REQUESTS_RECEIVED = Counter(
     "Number of client-server API requests received from bridges",
     labelnames=["owner", "bridge", "method", "endpoint"],
 )
+REQUESTS_RECEIVED_AGGREGATE = Counter(
+    "asmux_requests_received_aggregate",
+    "Number of client-server API requests received from bridges (without user info)",
+    labelnames=["bridge", "method", "endpoint"],
+)
 REQUESTS_HANDLED = Counter(
     "asmux_requests_handled",
     "Number of client-server API requests handled",
     labelnames=["owner", "bridge", "method", "endpoint"],
+)
+REQUESTS_HANDLED_AGGREGATE = Counter(
+    "asmux_requests_handled_aggregate",
+    "Number of client-server API requests handled (without user info)",
+    labelnames=["bridge", "method", "endpoint"],
 )
 
 
@@ -332,7 +342,10 @@ class ClientProxy:
         if az:
             metric_labels["owner"] = az.owner
             metric_labels["bridge"] = az.prefix
+        aggregate_labels = {**metric_labels}
+        aggregate_labels.pop("owner", None)
         REQUESTS_RECEIVED.labels(**metric_labels).inc()
+        REQUESTS_RECEIVED_AGGREGATE.labels(**aggregate_labels).inc()
         try:
             req["proxy_url"] = url.with_query(query or req.query)
             resp = await self.http.request(
@@ -349,6 +362,7 @@ class ClientProxy:
             raise Error.failed_to_contact_homeserver
         finally:
             REQUESTS_HANDLED.labels(**metric_labels).inc()
+            REQUESTS_HANDLED_AGGREGATE.labels(**aggregate_labels).inc()
         if resp.status >= 400 and resp.status not in (401, 403):
             self.log.debug(f"Got HTTP {resp.status} proxying request {self.request_log_fmt(req)}")
         return web.Response(status=resp.status, headers=resp.headers, body=resp.content)
