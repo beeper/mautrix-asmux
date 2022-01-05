@@ -1,10 +1,10 @@
-asyncpg>=0.20,<0.25
+asyncpg>=0.20,<0.26
 ruamel.yaml>=0.15.35,<0.18
 aiohttp>=3,<3.7
 yarl>=1,<1.6
-mautrix>=0.14.0rc2,<0.15
+mautrix>=0.14.0,<0.15
 multidict<5
-prometheus_client>=0.6,<0.12
+prometheus_client>=0.6,<0.13
 attrs
 cryptography
 bcrypt
