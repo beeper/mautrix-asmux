@@ -50,6 +50,8 @@ BridgeState.human_readable_errors.update(
     }
 )
 
+redactable_types = ("m.room.message", "m.room.encrypted", "m.sticker", "m.reaction")
+
 
 def make_ping_error(
     error: str,
@@ -329,6 +331,11 @@ class AppServiceProxy(AppServiceServerMixin):
         for event in events or []:
             evt_type = event.get("type", "")
             RECEIVED_EVENTS.labels(type=evt_type).inc()
+
+            if evt_type in redactable_types and len(event.get("content", {})) == 0:
+                DROPPED_EVENTS.labels(reason="event probably redacted", type=evt_type).inc()
+                continue
+
             room_id = event.get("room_id")
             to_user_id = event.get("to_user_id")
             if room_id:
