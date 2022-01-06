@@ -19,7 +19,7 @@ from multidict import CIMultiDict, MultiDict
 from yarl import URL
 import aiohttp
 
-from ..database import AppService, User
+from ..database import AppService, User, Room
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -233,9 +233,10 @@ class ClientProxy:
             headers["Content-Type"] = "application/json"
             # TODO remove this everywhere (in _proxy)?
             del headers["Content-Length"]
-        return await self._proxy(
+        resp, _ = await self._proxy(
             req, self.hs_address / "client/r0/login", body=body, headers=headers
         )
+        return resp
 
     async def proxy(
         self,
@@ -257,7 +258,8 @@ class ClientProxy:
                 del no_host_headers["Host"]
             except KeyError:
                 pass
-            return await self._proxy(req, url, headers=no_host_headers, body=_body_override)
+            resp, _ = await self._proxy(req, url, headers=no_host_headers, body=_body_override)
+            return resp
         req["proxy_for"] = az.name
 
         headers, query = self._copy_data(req, az)
@@ -275,7 +277,30 @@ class ClientProxy:
             ):
                 body = json.dumps(json_body).encode("utf-8")
 
-        return await self._proxy(req, url, headers, query, body, az=az)
+        resp, client_resp = await self._proxy(req, url, headers, query, body, az=az)
+
+        if spec == "client" and path == "r0/createRoom":
+            await self._register_room_from_create(az, resp, client_resp)
+
+        return resp
+
+    async def _register_room_from_create(
+        self, az: AppService, resp: web.Response, client_resp: aiohttp.ClientResponse
+    ) -> None:
+        if not 200 <= client_resp.status < 300:
+            return
+
+        resp.body = await client_resp.read()
+        resp.headers.pop("Transfer-Encoding", "")
+        resp.headers.pop("Content-Length", "")
+        resp_data = json.loads(resp.body)
+        if "room_id" in resp_data:
+            room = Room(id=resp_data["room_id"], owner=az.id, deleted=False)
+            self.log.debug(
+                f"Registering {az.name} ({az.id}) as the owner of {room.id}"
+                " based on /createRoom response"
+            )
+            await room.insert()
 
     @staticmethod
     def _relevant_path_part(url: URL) -> Optional[str]:
@@ -332,7 +357,7 @@ class ClientProxy:
         query: Optional[MultiDict[str]] = None,
         body: Any = None,
         az: Optional[AppService] = None,
-    ) -> web.Response:
+    ) -> tuple[web.Response, aiohttp.ClientResponse]:
         metric_labels = {
             "method": req.method,
             "endpoint": self._relevant_path_part(url),
@@ -365,7 +390,7 @@ class ClientProxy:
             REQUESTS_HANDLED_AGGREGATE.labels(**aggregate_labels).inc()
         if resp.status >= 400 and resp.status not in (401, 403):
             self.log.debug(f"Got HTTP {resp.status} proxying request {self.request_log_fmt(req)}")
-        return web.Response(status=resp.status, headers=resp.headers, body=resp.content)
+        return web.Response(status=resp.status, headers=resp.headers, body=resp.content), resp
 
     async def _find_login_token(self, user_id: UserID) -> Optional[str]:
         if not user_id:

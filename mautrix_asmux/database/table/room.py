@@ -34,12 +34,8 @@ class Room(Base):
         return Room(**row)._add_to_cache() if row else None
 
     async def insert(self) -> None:
-        await self.db.execute(
-            "INSERT INTO room (id, owner, deleted) VALUES ($1, $2, $3)",
-            self.id,
-            self.owner,
-            self.deleted,
-        )
+        q = "INSERT INTO room (id, owner, deleted) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING"
+        await self.db.execute(q, self.id, self.owner, self.deleted)
         self._add_to_cache()
 
     async def delete(self) -> None:
