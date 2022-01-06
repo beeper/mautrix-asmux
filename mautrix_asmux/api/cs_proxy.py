@@ -19,7 +19,7 @@ from multidict import CIMultiDict, MultiDict
 from yarl import URL
 import aiohttp
 
-from ..database import AppService, User, Room
+from ..database import AppService, Room, User
 from .errors import Error
 
 if TYPE_CHECKING:
