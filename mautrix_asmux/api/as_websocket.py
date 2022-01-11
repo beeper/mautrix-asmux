@@ -132,6 +132,19 @@ class AppServiceWebsocketHandler:
             log_sent=False,
         )
 
+    def send_bridge_unreachable_status(self, az: AppService) -> None:
+        async def check_and_send_bridge_unreachable_status() -> None:
+            # Wait a bit before reporting unreachable, we might reconnect right away
+            await asyncio.sleep(5)
+
+            # Only continue on to report unreachable if the websocket is still disconnected. If
+            # it's been re-established in the time it took us to handle this async action, do
+            # nothing.
+            if az.id not in self.websockets:
+                await self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE)
+
+        asyncio.create_task(check_and_send_bridge_unreachable_status())
+
     async def send_bridge_status(self, az: AppService, state_event: BridgeStateEvent) -> None:
         if not self.bridge_status_endpoint:
             return
@@ -246,9 +259,8 @@ class AppServiceWebsocketHandler:
 
                 asyncio.create_task(self.stop_sync_proxy(az))
                 if not self._stopping:
-                    asyncio.create_task(
-                        self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE)
-                    )
+                    self.send_bridge_unreachable_status(az)
+
         return ws.response
 
     def _send_metrics(self, az: AppService, txn: Events, metric: Counter) -> None:
