@@ -1,7 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, cast
-from collections import defaultdict
 from contextlib import asynccontextmanager
 from uuid import UUID
 import asyncio
@@ -23,6 +22,7 @@ from mautrix.types import EventType, RoomID, UserID
 from mautrix.util.opt_prometheus import Counter
 
 from ..database import AppService, Room, User
+from ..util import copy_headers_no_host
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -235,11 +235,7 @@ class ClientProxy:
 
     async def proxy_login(self, req: web.Request) -> web.Response:
         body = await req.read()
-        headers = req.headers.copy()
-        try:
-            del headers["Host"]
-        except KeyError:
-            pass
+        headers = copy_headers_no_host(req.headers)
         json_body = await req.json()
         if json_body.get("type") != "m.login.password":
             return await self.proxy(
@@ -270,11 +266,7 @@ class ClientProxy:
         az = await self.find_appservice(req)
         if not az:
             req["proxy_for"] = "<no auth>"
-            no_host_headers = req.headers.copy()
-            try:
-                del no_host_headers["Host"]
-            except KeyError:
-                pass
+            no_host_headers = copy_headers_no_host(req.headers)
             resp, _ = await self._proxy(req, url, headers=no_host_headers, body=_body_override)
             return resp
         req["proxy_for"] = az.name
@@ -504,11 +496,7 @@ class ClientProxy:
         elif not query["user_id"].endswith(self.mxid_suffix):
             raise Error.external_user_id
 
-        headers = req.headers.copy()
+        headers = copy_headers_no_host(req.headers)
         headers["Authorization"] = f"Bearer {self.as_token}"
-        try:
-            del headers["Host"]
-        except KeyError:
-            pass
 
         return headers, query

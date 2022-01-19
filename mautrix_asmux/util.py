@@ -44,4 +44,13 @@ def should_forward_pdu(az: Optional["AppService"], event: JSON, mxid_suffix: str
     )
 
 
-__all__ = ["is_double_puppeted", "should_forward_pdu"]
+def copy_headers_no_host(headers: dict[str, str]) -> dict[str, str]:
+    headers_no_host = headers.copy()
+    try:
+        del headers_no_host["Host"]
+    except KeyError:
+        pass
+    return headers_no_host
+
+
+__all__ = ["is_double_puppeted", "should_forward_pdu", "copy_headers_no_host"]
