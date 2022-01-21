@@ -3,23 +3,28 @@ build:
   needs: []
   image: docker:latest
   services:
-  - docker:dind
+    - docker:dind
   before_script:
-  - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
-  - docker build --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-  - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-  - if [ $CI_COMMIT_BRANCH == "master" ]; then
+    - docker build --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - if [ $CI_COMMIT_BRANCH == "master" ]; then
       docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest;
       docker push $CI_REGISTRY_IMAGE:latest;
-    fi
+      fi
 
 lint:
   stage: test
   needs: []
   image: python:3.9-alpine
   before_script:
-  - pip install black isort
+    - apk add git
+    - pip install pre-commit black isort
   script:
-  - black --check --diff --fast mautrix_asmux/
-  - isort --check-only --diff mautrix_asmux/
+    - pre-commit run -av trailing-whitespace
+    - pre-commit run -av end-of-file-fixer
+    - pre-commit run -av check-yaml
+    - pre-commit run -av check-added-large-files
+    - black --check --diff --fast mautrix_asmux/
+    - isort --check-only --diff mautrix_asmux/
