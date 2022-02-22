@@ -93,6 +93,7 @@ class ClientProxy:
 
         self.app = web.Application(middlewares=[self.cancel_logger])
         self.app.router.add_post("/client/r0/login", self.proxy_login)
+        self.app.router.add_post("/client/v3/login", self.proxy_login)
         self.app.router.add_get("/client/unstable/fi.mau.as_sync", server.as_websocket.handle_ws)
         self.app.router.add_put("/client/unstable/com.beeper.asmux/dms", self.update_dms)
         self.app.router.add_patch("/client/unstable/com.beeper.asmux/dms", self.update_dms)
@@ -156,7 +157,7 @@ class ClientProxy:
         try:
             return self.user_ids[token_hash]
         except KeyError:
-            url = self.hs_address / "client" / "r0" / "account" / "whoami"
+            url = self.hs_address / "client" / "v3" / "account" / "whoami"
             async with self._get(url, token, raise_error=False) as resp:
                 # TODO handle other errors?
                 if resp.status in (401, 403):
@@ -197,7 +198,7 @@ class ClientProxy:
         async with self.dm_locks[user_id]:
             url = (
                 self.hs_address
-                / "client/r0/user"
+                / "client/v3/user"
                 / user_id
                 / "account_data"
                 / str(EventType.DIRECT)
@@ -226,7 +227,7 @@ class ClientProxy:
         json_body = await req.json()
         if json_body.get("type") != "m.login.password":
             return await self.proxy(
-                req, _spec_override="client", _path_override="r0/login", _body_override=body
+                req, _spec_override="client", _path_override="v3/login", _body_override=body
             )
         if await self.convert_login_password(json_body):
             body = json.dumps(json_body)
@@ -234,7 +235,7 @@ class ClientProxy:
             # TODO remove this everywhere (in _proxy)?
             del headers["Content-Length"]
         resp, _ = await self._proxy(
-            req, self.hs_address / "client/r0/login", body=body, headers=headers
+            req, self.hs_address / "client/v3/login", body=body, headers=headers
         )
         return resp
 
@@ -265,10 +266,11 @@ class ClientProxy:
         headers, query = self._copy_data(req, az)
 
         body = _body_override or req.content
+        unversioned_path = path.removeprefix("r0/").removeprefix("v3/")
 
         if spec == "client" and (
-            (path == "r0/delete_devices" and req.method == "POST")
-            or (path.startswith("r0/devices/") and req.method == "DELETE")
+            (unversioned_path == "delete_devices" and req.method == "POST")
+            or (unversioned_path.startswith("devices/") and req.method == "DELETE")
         ):
             body = await req.read()
             json_body = await req.json()
@@ -279,7 +281,7 @@ class ClientProxy:
 
         resp, client_resp = await self._proxy(req, url, headers, query, body, az=az)
 
-        if spec == "client" and path == "r0/createRoom":
+        if spec == "client" and unversioned_path == "createRoom":
             await self._register_room_from_create(az, resp, client_resp)
 
         return resp
@@ -304,11 +306,13 @@ class ClientProxy:
 
     @staticmethod
     def _relevant_path_part(url: URL) -> Optional[str]:
-        path = url.path
+        path = url.path.replace("/_matrix/media/r0", "/_matrix/media/v3").replace(
+            "/_matrix/client/r0", "/_matrix/client/v3"
+        )
         parts = path.split("/")
-        if path.startswith("/_matrix/media/r0/"):
+        if path.startswith("/_matrix/media/v3/"):
             return f"/media/{parts[4]}"
-        elif path.startswith("/_matrix/client/r0/rooms/") and len(parts) > 6:
+        elif path.startswith("/_matrix/client/v3/rooms/") and len(parts) > 6:
             if len(parts) > 7:
                 return f"/rooms/.../{parts[6]}/..."
             else:
@@ -317,33 +321,33 @@ class ClientProxy:
             "/_matrix/client/unstable/org.matrix.msc2716/rooms/"
         ) and path.endswith("/batch_send"):
             return f"/unstable/rooms/.../batch_send"
-        elif path.startswith("/_matrix/client/r0/user/") and len(parts) > 6:
+        elif path.startswith("/_matrix/client/v3/user/") and len(parts) > 6:
             if len(parts) > 8 and parts[6] == "rooms":
                 end = "/..." if len(parts) > 9 else ""
                 return f"/user/.../rooms/.../{parts[8]}{end}"
             else:
                 end = "/..." if len(parts) > 7 else ""
                 return f"/user/.../{parts[6]}{end}"
-        elif path.startswith("/_matrix/client/r0/directory/room/"):
+        elif path.startswith("/_matrix/client/v3/directory/room/"):
             return "/directory/room/..."
-        elif path.startswith("/_matrix/client/r0/directory/list/room/"):
+        elif path.startswith("/_matrix/client/v3/directory/list/room/"):
             return "/directory/list/room/..."
-        elif path.startswith("/_matrix/client/r0/join/"):
+        elif path.startswith("/_matrix/client/v3/join/"):
             return "/join/..."
-        elif path.startswith("/_matrix/client/r0/sendToDevice/"):
+        elif path.startswith("/_matrix/client/v3/sendToDevice/"):
             return "/sendToDevice/..."
-        elif path.startswith("/_matrix/client/r0/devices/") and len(parts) > 5 and parts[5]:
+        elif path.startswith("/_matrix/client/v3/devices/") and len(parts) > 5 and parts[5]:
             return "/devices/..."
-        elif path.startswith("/_matrix/client/r0/pushrules/") and len(parts) > 5 and parts[5]:
+        elif path.startswith("/_matrix/client/v3/pushrules/") and len(parts) > 5 and parts[5]:
             return "/pushrules/..."
-        elif path.startswith("/_matrix/client/r0/presence/") and path.endswith("/status"):
+        elif path.startswith("/_matrix/client/v3/presence/") and path.endswith("/status"):
             return f"/presence/.../status"
-        elif path.startswith("/_matrix/client/r0/profile/"):
+        elif path.startswith("/_matrix/client/v3/profile/"):
             if len(parts) > 6:
                 return f"/profile/.../{parts[6]}"
             return "/profile/..."
-        elif path.startswith("/_matrix/client/r0/"):
-            return path[len("/_matrix/client/r0") :]
+        elif path.startswith("/_matrix/client/v3/"):
+            return path[len("/_matrix/client/v3") :]
         elif path.startswith("/_matrix/client/unstable/"):
             return path[len("/_matrix/client") :]
         else:

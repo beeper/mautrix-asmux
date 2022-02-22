@@ -340,7 +340,7 @@ class ManagementAPI:
 
     async def _register_as_bot(self, az: AppService) -> None:
         localpart = f"{self.global_prefix}{az.owner}_{az.prefix}_{az.bot}"
-        url = (self.hs_address / "_matrix/client/r0/register").with_query({"kind": "user"})
+        url = (self.hs_address / "_matrix/client/v3/register").with_query({"kind": "user"})
         await self.http.post(
             url, json={"username": localpart}, headers={"Authorization": f"Bearer {self.as_token}"}
         )
