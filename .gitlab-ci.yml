@@ -17,10 +17,10 @@ build:
 lint:
   stage: test
   needs: []
-  image: python:3.9-alpine
+  image: python:latest
   before_script:
     - apk add git
-    - pip install pre-commit black isort
+    - pip install -r dev-requirements.txt
   script:
     - pre-commit run -av trailing-whitespace
     - pre-commit run -av end-of-file-fixer
