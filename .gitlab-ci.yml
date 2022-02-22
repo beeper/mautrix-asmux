@@ -19,7 +19,6 @@ lint:
   needs: []
   image: python:latest
   before_script:
-    - apk add git
     - pip install -r dev-requirements.txt
   script:
     - pre-commit run -av trailing-whitespace
