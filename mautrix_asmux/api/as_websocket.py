@@ -135,7 +135,7 @@ class AppServiceWebsocketHandler:
     def send_bridge_unreachable_status(self, az: AppService) -> None:
         async def check_and_send_bridge_unreachable_status() -> None:
             # Wait a bit before reporting unreachable, we might reconnect right away
-            await asyncio.sleep(5)
+            await asyncio.sleep(30)
 
             # Only continue on to report unreachable if the websocket is still disconnected. If
             # it's been re-established in the time it took us to handle this async action, do
