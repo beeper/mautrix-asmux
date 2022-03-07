@@ -250,6 +250,8 @@ class AppServiceWebsocketHandler:
             await ws.send(command="connect", status="connected")
             ws.queue_task = asyncio.create_task(self._consume_queue(az, ws))
             await ws.handle()
+        except Exception as e:
+            ws.log.warning(f"Exception in websocket handler: {e}")
         finally:
             ws.log.debug("Websocket handler finished")
             ws.cancel_queue_task("Websocket disconnected")
