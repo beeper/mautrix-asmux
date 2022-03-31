@@ -29,6 +29,7 @@ class WebsocketHandler:
     timeouts: int
     queue_task: Optional[asyncio.Task]
     last_received: float
+    dead: bool
 
     def __init__(self, type_name: str, log: logging.Logger, proto: str, version: int) -> None:
         self.type_name = type_name
@@ -41,6 +42,7 @@ class WebsocketHandler:
         self._command_handlers = {}
         self.queue_task = None
         self.last_received = 0.0
+        self.dead = False
 
     @property
     def response(self) -> web.WebSocketResponse:
@@ -120,7 +122,10 @@ class WebsocketHandler:
 
     def cancel_queue_task(self, reason: str) -> None:
         if self.queue_task is not None and not self.queue_task.done():
+            self.log.debug("Cancelling queue task (%s)", reason)
             self.queue_task.cancel(reason)
+        else:
+            self.log.debug("Queue task seems to be cancelled already (%s)", reason)
 
     async def close(self, code: Union[int, WSCloseCode], status: Optional[str] = None) -> None:
         try:
@@ -134,6 +139,7 @@ class WebsocketHandler:
             )
             ret = await self._ws.close(code=code, message=message)
             self.log.debug(f"Websocket closed: {ret}")
+            self.dead = True
         except Exception:
             self.log.exception("Error sending close to client")
 
@@ -181,6 +187,10 @@ class WebsocketHandler:
                     self.log.debug("Websocket close message received")
                     break
                 elif msg.type == WSMsgType.TEXT:
+                    if self.dead:
+                        self.log.warning("Received data even though websocket is marked as dead")
+                        self._ws._writer.transport.abort()
+                        continue
                     try:
                         self._handle_text(msg)
                     except Exception:

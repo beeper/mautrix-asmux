@@ -265,6 +265,7 @@ class AppServiceWebsocketHandler:
         finally:
             ws.log.debug("Websocket handler finished")
             ws.cancel_queue_task("Websocket disconnected")
+            ws.dead = True
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).dec()
             if self.websockets.get(az.id) == ws:
                 del self.websockets[az.id]
@@ -379,13 +380,15 @@ class AppServiceWebsocketHandler:
         ws.log.debug("Started consuming events from queue")
         consumer_id = queue.start_consuming()
         try:
-            while True:
+            while not ws.dead:
                 await self._consume_queue_one(az, ws, queue)
         except Exception:
             self.log.exception("Fatal error in queue consumer")
         except asyncio.CancelledError as e:
             ws.log.debug(f"Queue consumer cancelled: {e}")
             raise
+        else:
+            self.log.warning("Websocket seems to have died without cancelling queue consumer?")
         finally:
             queue.stop_consuming(consumer_id)
 
