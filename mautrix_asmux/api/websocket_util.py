@@ -122,8 +122,8 @@ class WebsocketHandler:
 
     def cancel_queue_task(self, reason: str) -> None:
         if self.queue_task is not None and not self.queue_task.done():
-            self.log.debug("Cancelling queue task (%s)", reason)
             self.queue_task.cancel(reason)
+            self.log.debug("Cancelled queue task (%s)", reason)
         else:
             self.log.debug("Queue task seems to be cancelled already (%s)", reason)
 
