@@ -7,4 +7,3 @@ line_length = 99
 [tool.black]
 line-length = 99
 target-version = ["py39"]
-required-version = "22.1.0"
