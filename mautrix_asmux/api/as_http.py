@@ -6,6 +6,9 @@ import logging
 import time
 
 from aiohttp import ClientError, ClientTimeout, ContentTypeError
+from yarl import URL
+import aiohttp
+
 from mautrix.api import HTTPAPI
 from mautrix.util.bridge_state import GlobalBridgeState
 from mautrix.util.message_send_checkpoint import (
@@ -14,8 +17,6 @@ from mautrix.util.message_send_checkpoint import (
     MessageSendCheckpointStatus,
     MessageSendCheckpointStep,
 )
-from yarl import URL
-import aiohttp
 
 from ..database import AppService
 from .as_proxy import Events, make_ping_error, migrate_state_data, send_message_checkpoints

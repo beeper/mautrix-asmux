@@ -10,11 +10,12 @@ import logging
 import re
 
 from aiohttp import ClientSession, web
+from ruamel.yaml.comments import CommentedMap
+from yarl import URL
+
 from mautrix.client import ClientAPI
 from mautrix.types import JSON, RoomID
 from mautrix.util.config import RecursiveDict, yaml
-from ruamel.yaml.comments import CommentedMap
-from yarl import URL
 
 from ..config import Config
 from ..database import AppService, Room, User

@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 import time
 
 from attr import dataclass
+import aiohttp
+
 from mautrix.api import HTTPAPI
 from mautrix.types import SerializableAttrs, field
-import aiohttp
 
 
 @dataclass

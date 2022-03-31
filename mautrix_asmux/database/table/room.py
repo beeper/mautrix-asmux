@@ -4,6 +4,7 @@ from typing import ClassVar, Dict, Optional
 from uuid import UUID
 
 from attr import dataclass
+
 from mautrix.types import RoomID
 
 from .base import Base

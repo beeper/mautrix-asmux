@@ -9,6 +9,9 @@ import time
 
 from aiohttp import web
 from attr import dataclass
+import aiohttp
+import attr
+
 from mautrix.api import HTTPAPI
 from mautrix.appservice import AppServiceServerMixin
 from mautrix.types import JSON, DeviceLists, DeviceOTKCount, UserID
@@ -21,8 +24,6 @@ from mautrix.util.message_send_checkpoint import (
     MessageSendCheckpointStep,
 )
 from mautrix.util.opt_prometheus import Counter
-import aiohttp
-import attr
 
 from ..database import AppService, Room
 from ..segment import track_event, track_events

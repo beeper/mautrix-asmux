@@ -9,6 +9,9 @@ import time
 
 from aiohttp import web
 from aiohttp.http import WSCloseCode
+from yarl import URL
+import aiohttp
+
 from mautrix.api import HTTPAPI
 from mautrix.errors import MatrixStandardRequestError, make_request_error, standard_error
 from mautrix.types import JSON
@@ -21,8 +24,6 @@ from mautrix.util.message_send_checkpoint import (
     MessageSendCheckpointStep,
 )
 from mautrix.util.opt_prometheus import Counter, Gauge
-from yarl import URL
-import aiohttp
 
 from ..config import Config
 from ..database import AppService

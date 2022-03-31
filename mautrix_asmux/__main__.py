@@ -3,6 +3,7 @@
 import sys
 
 from aiohttp import ClientSession, DummyCookieJar, TCPConnector
+
 from mautrix.api import HTTPAPI
 from mautrix.util.async_db import Database
 from mautrix.util.program import Program

@@ -12,12 +12,13 @@ import logging
 import time
 
 from aiohttp import hdrs, web
-from mautrix.client import ClientAPI
-from mautrix.types import EventType, RoomID, UserID
-from mautrix.util.opt_prometheus import Counter
 from multidict import CIMultiDict, MultiDict
 from yarl import URL
 import aiohttp
+
+from mautrix.client import ClientAPI
+from mautrix.types import EventType, RoomID, UserID
+from mautrix.util.opt_prometheus import Counter
 
 from ..database import AppService, Room, User
 from .errors import Error
