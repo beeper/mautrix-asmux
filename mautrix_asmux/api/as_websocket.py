@@ -206,10 +206,9 @@ class AppServiceWebsocketHandler:
             return await self._get_response(resp)
 
     async def ping_server(self, az: AppService, ws: WebsocketHandler) -> Dict[str, Any]:
-        current_ws = self.websockets[az.id]
-        assert (
-            ws == current_ws
-        ), f"websocket {ws.identifier} is not current ({current_ws.identifier})"
+        current_ws = self.websockets.get(az.id)
+        current_id = current_ws.identifier if current_ws else None
+        assert ws == current_ws, f"websocket {ws.identifier} is not current ({current_id})"
         return {"timestamp": int(time.time() * 1000)}
 
     async def stop_sync_proxy(self, az: AppService) -> None:
