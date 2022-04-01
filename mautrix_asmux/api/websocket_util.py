@@ -1,6 +1,8 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Any, Awaitable, Callable, Dict, Optional, Union
+from __future__ import annotations
+
+from typing import Any, Awaitable, Callable, Optional
 import asyncio
 import json
 import logging
@@ -27,11 +29,19 @@ class WebsocketHandler:
     _prev_req_id: int
     proto: int
     timeouts: int
-    queue_task: Optional[asyncio.Task]
+    queue_task: asyncio.Task | None
     last_received: float
     dead: bool
+    identifier: str | None
 
-    def __init__(self, type_name: str, log: logging.Logger, proto: str, version: int) -> None:
+    def __init__(
+        self,
+        type_name: str,
+        log: logging.Logger,
+        proto: str,
+        version: int,
+        identifier: str | None = None,
+    ) -> None:
         self.type_name = type_name
         self._ws = web.WebSocketResponse(protocols=(proto,))
         self.log = log
@@ -43,6 +53,7 @@ class WebsocketHandler:
         self.queue_task = None
         self.last_received = 0.0
         self.dead = False
+        self.identifier = identifier
 
     @property
     def response(self) -> web.WebSocketResponse:
@@ -52,7 +63,7 @@ class WebsocketHandler:
         self._command_handlers[command] = handler
 
     async def _call_handler(
-        self, handler: CommandHandler, command: str, req_id: Optional[int], data: Data
+        self, handler: CommandHandler, command: str, req_id: int | None, data: Data
     ) -> None:
         try:
             resp = await handler(self, data)
@@ -127,7 +138,7 @@ class WebsocketHandler:
         else:
             self.log.debug("Queue task seems to be cancelled already (%s)", reason)
 
-    async def close(self, code: Union[int, WSCloseCode], status: Optional[str] = None) -> None:
+    async def close(self, code: int | WSCloseCode, status: str | None = None) -> None:
         try:
             message = f"Closing websocket ({code} / {status})"
             self.log.debug(message)
@@ -155,7 +166,7 @@ class WebsocketHandler:
         self,
         command: str,
         *,
-        top_level_data: Optional[Dict[str, Any]] = None,
+        top_level_data: dict[str, Any] | None = None,
         raise_errors: bool = False,
         **kwargs: Any,
     ) -> Optional[Data]:

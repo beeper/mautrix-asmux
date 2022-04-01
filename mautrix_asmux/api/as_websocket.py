@@ -205,8 +205,11 @@ class AppServiceWebsocketHandler:
         async with self.sync_proxy_sess.put(url, json=req, headers=headers) as resp:
             return await self._get_response(resp)
 
-    @staticmethod
-    async def ping_server(_1: WebsocketHandler, _2: Dict[str, Any]) -> Dict[str, Any]:
+    async def ping_server(self, az: AppService, ws: WebsocketHandler) -> Dict[str, Any]:
+        current_ws = self.websockets[az.id]
+        assert (
+            ws == current_ws
+        ), f"websocket {ws.identifier} is not current ({current_ws.identifier})"
         return {"timestamp": int(time.time() * 1000)}
 
     async def stop_sync_proxy(self, az: AppService) -> None:
@@ -238,6 +241,7 @@ class AppServiceWebsocketHandler:
             proto="fi.mau.as_sync",
             version=proto_version,
             log=self.log.getChild(az.name).getChild(identifier),
+            identifier=identifier,
         )
         ws.set_handler("bridge_status", lambda _, data: self.send_remote_status(az, data))
         ws.set_handler(
@@ -245,7 +249,7 @@ class AppServiceWebsocketHandler:
         )
         ws.set_handler("push_key", lambda _, data: az.set_push_key(PushKey.deserialize(data)))
         ws.set_handler("start_sync", lambda _, data: self.start_sync_proxy(az, data))
-        ws.set_handler("ping", self.ping_server)
+        ws.set_handler("ping", lambda ws, _: self.ping_server(az, ws))
         await ws.prepare(req)
         try:
             old_websocket = self.websockets.pop(az.id)
