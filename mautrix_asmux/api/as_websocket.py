@@ -67,6 +67,11 @@ class SyncProxyNotActive(MatrixStandardRequestError):
     pass
 
 
+class WebsocketNotConnected(Exception):
+    def __init__(self) -> None:
+        super().__init__("Websocket not connected")
+
+
 class AppServiceWebsocketHandler:
     log: TraceLogger = logging.getLogger("mau.api.as_websocket")
     websockets: dict[UUID, WebsocketHandler]
@@ -478,6 +483,24 @@ class AppServiceWebsocketHandler:
         except Exception:
             return "websocket-send-fail"
         return "ok"
+
+    async def post_command(
+        self, az: AppService, command: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        if self.should_wakeup(az, only_if_ws_timeout=True):
+            asyncio.create_task(self.wakeup_appservice(az))
+        attempts = 0
+        while True:
+            try:
+                ws = self.websockets[az.id]
+                break
+            except KeyError:
+                attempts += 1
+                # TODO do something more advanced than sleeping?
+                await asyncio.sleep(0.25)
+                if attempts > 20:
+                    raise WebsocketNotConnected()
+        return await asyncio.wait_for(ws.request(command, raise_errors=True, **data), timeout=10)
 
     async def ping(self, az: AppService) -> GlobalBridgeState:
         try:

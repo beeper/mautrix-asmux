@@ -2,6 +2,7 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 from uuid import UUID
+import asyncio
 import base64
 import copy
 import io
@@ -19,6 +20,7 @@ from mautrix.util.config import RecursiveDict, yaml
 
 from ..config import Config
 from ..database import AppService, Room, User
+from .as_websocket import WebsocketNotConnected
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -100,6 +102,10 @@ class ManagementAPI:
 
         self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
         self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
+        self.mxauth_app.router.add_post("/appservice/{id}/exec/{command}", self.exec_appservice)
+        self.mxauth_app.router.add_post(
+            "/appservice/{owner}/{prefix}/exec/{command}", self.exec_appservice
+        )
 
         self.public_app = web.Application()
         self.public_app.router.add_get("/config/{prefix}/register", self.register_config)
@@ -168,8 +174,9 @@ class ManagementAPI:
 
     async def _mx_auth_callback(self, req: web.Request, auth: str) -> None:
         user_id = await self.server.cs_proxy.get_user_id(auth)
-        # We can ignore the server name since get_user_id will only use the local server
-        localpart, _ = ClientAPI.parse_user_id(user_id)
+        localpart, homeserver = ClientAPI.parse_user_id(user_id)
+        # get_user_id will only use the local server, so this should never fail
+        assert homeserver == self.server_name, "Mismatching homeserver in user ID"
         user = await User.get(localpart)
         if not user:
             raise Error.user_not_found
@@ -456,3 +463,39 @@ class ManagementAPI:
         return web.Response(
             status=200, content_type="text/yaml", body=self._configure_imessage(az)
         )
+
+    async def exec_appservice(self, req: web.Request) -> web.Response:
+        try:
+            command = req.match_info["command"]
+        except KeyError:
+            raise Error.missing_fields
+        try:
+            data = await req.json()
+        except json.JSONDecodeError:
+            raise Error.request_not_json
+        az = await self._get_appservice(req)
+        if az.push:
+            raise Error.exec_not_supported
+        try:
+            self.log.debug(f"Sending command {command} to {az.name}")
+            resp = await self.server.as_websocket.post_command(az, command, data)
+        except Exception as e:
+            self.log.warning(
+                f"Error sending command {command} to {az.name}: {type(e).__name__}: {e}"
+            )
+            status = 502
+            msg = str(e)
+            if isinstance(e, WebsocketNotConnected):
+                msg = "websocket not connected"
+                status = 503
+            elif isinstance(e, asyncio.TimeoutError):
+                msg = "timed out waiting for response"
+                status = 504
+            return web.json_response(
+                {
+                    "errcode": "FI.MAU.WEBSOCKET_SEND_FAIL",
+                    "error": f"Failed to send command: {msg}",
+                },
+                status=status,
+            )
+        return web.json_response(resp)

@@ -208,6 +208,15 @@ class _ErrorMeta:
             )
         )
 
+    @property
+    def exec_not_supported(self) -> web.HTTPException:
+        raise web.HTTPNotImplemented(
+            **self._make_error(
+                "FI.MAU.NOT_IMPLEMENTED",
+                "Sending custom API requests to non-websocket appservices is not implemented",
+            )
+        )
+
 
 class Error(metaclass=_ErrorMeta):
     pass
