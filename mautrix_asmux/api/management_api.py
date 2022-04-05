@@ -20,8 +20,7 @@ from mautrix.util.config import RecursiveDict, yaml
 
 from ..config import Config
 from ..database import AppService, Room, User
-from .as_websocket import WebsocketNotConnected
-from .errors import Error
+from .errors import Error, WebsocketErrorResponse, WebsocketNotConnected
 
 if TYPE_CHECKING:
     from ..server import MuxServer
@@ -479,6 +478,8 @@ class ManagementAPI:
         try:
             self.log.debug(f"Sending command {command} to {az.name}")
             resp = await self.server.as_websocket.post_command(az, command, data)
+        except WebsocketErrorResponse as e:
+            return web.json_response(e.data, status=400)
         except Exception as e:
             self.log.warning(
                 f"Error sending command {command} to {az.name}: {type(e).__name__}: {e}"

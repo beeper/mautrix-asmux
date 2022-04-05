@@ -11,13 +11,10 @@ import time
 from aiohttp import web
 from aiohttp.http import WSCloseCode, WSMessage, WSMsgType
 
+from .errors import WebsocketErrorResponse
+
 Data = dict[str, Any]
 CommandHandler = Callable[["WebsocketHandler", Data], Awaitable[Optional[Data]]]
-
-
-class WebsocketClosedError(Exception):
-    def __init__(self) -> None:
-        super().__init__("Websocket closed before response received")
 
 
 class WebsocketHandler:
@@ -116,8 +113,7 @@ class WebsocketHandler:
                 if command == "response":
                     waiter.set_result(data)
                 elif command == "error":
-                    # TODO use data["code"]?
-                    waiter.set_exception(Exception(data["message"]))
+                    waiter.set_exception(WebsocketErrorResponse(data))
             return
 
         try:

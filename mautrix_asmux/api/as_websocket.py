@@ -39,7 +39,7 @@ from .as_proxy import (
 )
 from .as_queue import AppServiceQueue, QueueWaiterOverridden
 from .cs_proxy import ClientProxy
-from .errors import Error
+from .errors import Error, WebsocketNotConnected
 from .websocket_util import WebsocketHandler
 
 # Response timeout when sending an event via websocket for the first time.
@@ -65,11 +65,6 @@ CONNECTED_WEBSOCKETS = Gauge(
 @standard_error("FI.MAU.SYNCPROXY.NOT_ACTIVE")
 class SyncProxyNotActive(MatrixStandardRequestError):
     pass
-
-
-class WebsocketNotConnected(Exception):
-    def __init__(self) -> None:
-        super().__init__("Websocket not connected")
 
 
 class AppServiceWebsocketHandler:

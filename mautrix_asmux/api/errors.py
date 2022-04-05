@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Dict
+from typing import Any
 import json
 
 from aiohttp import web
@@ -220,3 +220,22 @@ class _ErrorMeta:
 
 class Error(metaclass=_ErrorMeta):
     pass
+
+
+class WebsocketClosedError(Exception):
+    def __init__(self) -> None:
+        super().__init__("Websocket closed before response received")
+
+
+class WebsocketErrorResponse(Exception):
+    def __init__(self, data: dict[str, Any]) -> None:
+        message = data["message"]
+        if "code" in data:
+            message = f"{data['code']}: {message}"
+        super().__init__(message)
+        self.data = data
+
+
+class WebsocketNotConnected(Exception):
+    def __init__(self) -> None:
+        super().__init__("Websocket not connected")
