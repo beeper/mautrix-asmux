@@ -11,7 +11,7 @@ import time
 from aiohttp import web
 from aiohttp.http import WSCloseCode, WSMessage, WSMsgType
 
-from .errors import WebsocketErrorResponse
+from .errors import WebsocketClosedError, WebsocketErrorResponse
 
 Data = dict[str, Any]
 CommandHandler = Callable[["WebsocketHandler", Data], Awaitable[Optional[Data]]]
