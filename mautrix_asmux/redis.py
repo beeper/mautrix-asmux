@@ -1,9 +1,9 @@
+from typing import cast
 from uuid import UUID
 import asyncio
 import logging
 
-# Annoyingly there are no stubbed types for asyncio redis yet
-from redis.asyncio import Redis  # type: ignore
+from aioredis import Redis
 
 from mautrix.types import RoomID
 from mautrix_asmux.database.table import AppService, Room, User
@@ -61,7 +61,7 @@ class RedisCacheHandler:
     # Publish invalidation messages
 
     async def invalidate_az(self, az: AppService) -> None:
-        await self.redis.publish(AS_CACHE_CHANNEL, az.id)
+        await self.redis.publish(AS_CACHE_CHANNEL, cast(str, az.id))
 
     async def invalidate_room(self, room: Room) -> None:
         await self.redis.publish(ROOM_CACHE_CHANNEL, room.id)
