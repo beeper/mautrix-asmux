@@ -389,6 +389,8 @@ class AppServiceProxy(AppServiceServerMixin):
 
         for appservice_id, events in events.items():
             appservice = await AppService.get(appservice_id)
+            if appservice is None:
+                continue
             self.log.debug(
                 f"Preparing to send {len(events.pdu)} PDUs and {len(events.edu)} EDUs "
                 f"from transaction {events.txn_id} to {appservice.name}"

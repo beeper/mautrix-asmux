@@ -231,6 +231,7 @@ class AppServiceWebsocketHandler:
         if self._stopping:
             raise Error.server_shutting_down
         az = await ClientProxy.find_appservice(req, raise_errors=True)
+        assert az is not None
         if az.push:
             raise Error.appservice_ws_not_enabled
         identifier = req.headers.get("X-Mautrix-Process-ID", "unidentified")
