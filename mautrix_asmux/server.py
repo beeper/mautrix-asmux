@@ -20,6 +20,7 @@ from .api import (
 from .config import Config
 from .redis import RedisCacheHandler
 
+
 class MuxServer:
     log: logging.Logger = logging.getLogger("mau.server")
     app: web.Application
