@@ -99,6 +99,8 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         copy("mux.sync_proxy.token")
         copy("mux.sync_proxy.asmux_address")
 
+        copy("mux.redis")
+
         copy("logging")
 
     def generate_registration(self) -> None:

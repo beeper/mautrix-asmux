@@ -50,6 +50,8 @@ mux:
     port: 29326
     # Database URI. Currently only supports postgres://user:password@host/dbname
     database: postgres:///mautrix-asmux
+    # Redis URI for cross process co-ordination
+    redis: redis://
     # Public address to reach asmux
     public_address: https://asmux.example.com
     # Shared secret for accessing the API
