@@ -1,6 +1,8 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import ClassVar, Dict, Iterable, List, Optional, Tuple
+from __future__ import annotations
+
+from typing import ClassVar, Iterable
 from uuid import UUID, uuid4
 import base64
 import hashlib
@@ -10,7 +12,8 @@ import secrets
 import time
 
 from attr import dataclass
-import asyncpg
+
+from mautrix.util.async_db import Connection
 
 from ...sygnal import PushKey
 from .base import Base
@@ -28,15 +31,15 @@ class AppService(Base):
     hs_token: str
     as_token: str
     push: bool
-    config_password_hash: Optional[bytes] = None
-    config_password_expiry: Optional[int] = None
-    push_key: Optional[PushKey] = None
+    config_password_hash: bytes | None = None
+    config_password_expiry: int | None = None
+    push_key: PushKey | None = None
 
-    login_token: Optional[str] = None
+    login_token: str | None = None
     created_: bool = False
 
-    cache_by_id: ClassVar[Dict[UUID, "AppService"]] = {}
-    cache_by_owner: ClassVar[Dict[Tuple[str, str], "AppService"]] = {}
+    cache_by_id: ClassVar[dict[UUID, AppService]] = {}
+    cache_by_owner: ClassVar[dict[tuple[str, str], AppService]] = {}
 
     def __attrs_post_init__(self) -> None:
         if self.push_key and isinstance(self.push_key, str):
@@ -50,7 +53,7 @@ class AppService(Base):
     def real_as_token(self) -> str:
         return f"{self.id}-{self.as_token}"
 
-    def _add_to_cache(self) -> "AppService":
+    def _add_to_cache(self) -> AppService:
         self.cache_by_id[self.id] = self
         self.cache_by_owner[(self.owner, self.prefix)] = self
         return self
@@ -60,9 +63,7 @@ class AppService(Base):
         del self.cache_by_owner[(self.owner, self.prefix)]
 
     @classmethod
-    async def get(
-        cls, id: UUID, *, conn: Optional[asyncpg.Connection] = None
-    ) -> Optional["AppService"]:
+    async def get(cls, id: UUID, *, conn: Connection | None = None) -> AppService | None:
         try:
             return cls.cache_by_id[id]
         except KeyError:
@@ -80,8 +81,8 @@ class AppService(Base):
 
     @classmethod
     async def find(
-        cls, owner: str, prefix: str, *, conn: Optional[asyncpg.Connection] = None
-    ) -> Optional["AppService"]:
+        cls, owner: str, prefix: str, *, conn: Connection | None = None
+    ) -> AppService | None:
         try:
             return cls.cache_by_owner[(owner, prefix)]
         except KeyError:
@@ -101,7 +102,7 @@ class AppService(Base):
     @classmethod
     async def find_or_create(
         cls, user: User, prefix: str, *, bot: str = "bot", address: str = "", push: bool = True
-    ) -> "AppService":
+    ) -> AppService:
         try:
             return cls.cache_by_owner[(user.id, prefix)]
         except KeyError:
@@ -131,8 +132,8 @@ class AppService(Base):
 
     @classmethod
     async def get_many(
-        cls, ids: List[UUID], *, conn: Optional[asyncpg.Connection] = None
-    ) -> Iterable["AppService"]:
+        cls, ids: list[UUID], *, conn: Connection | None = None
+    ) -> Iterable[AppService]:
         conn = conn or cls.db
         rows = await conn.fetch(
             "SELECT appservice.id, owner, prefix, bot, address, hs_token,"
@@ -144,7 +145,7 @@ class AppService(Base):
         )
         return (AppService(**row)._add_to_cache() for row in rows)
 
-    async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
+    async def insert(self, *, conn: Connection | None = None) -> None:
         conn = conn or self.db
         await conn.execute(
             "INSERT INTO appservice "
@@ -161,9 +162,7 @@ class AppService(Base):
         )
         self._add_to_cache()
 
-    async def set_address(
-        self, address: str, *, conn: Optional[asyncpg.Connection] = None
-    ) -> None:
+    async def set_address(self, address: str, *, conn: Connection | None = None) -> None:
         if address is None or self.address == address:
             return
         self.address = address
@@ -176,7 +175,7 @@ class AppService(Base):
         self.push = push
         await self.db.execute("UPDATE appservice SET push=$2 WHERE id=$1", self.id, self.push)
 
-    async def generate_password(self, lifetime: Optional[int] = None) -> str:
+    async def generate_password(self, lifetime: int | None = None) -> str:
         token = secrets.token_bytes()
         self.config_password_hash = hashlib.sha256(token).digest()
         self.config_password_expiry = None if lifetime is None else (int(time.time()) + lifetime)
@@ -204,7 +203,7 @@ class AppService(Base):
         )
         return correct and not expired
 
-    async def set_push_key(self, push_key: Optional[PushKey]) -> None:
+    async def set_push_key(self, push_key: PushKey | None) -> None:
         if push_key and not push_key.pushkey:
             push_key = None
         self.push_key = push_key
@@ -214,7 +213,7 @@ class AppService(Base):
             self.push_key.json() if self.push_key else None,
         )
 
-    async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
+    async def delete(self, *, conn: Connection | None = None) -> None:
         conn = conn or self.db
         self._delete_from_cache()
         await conn.execute("DELETE FROM appservice WHERE id=$1", self.id)

@@ -3,7 +3,7 @@ ruamel.yaml>=0.15.35,<0.18
 # aiohttp 3.7 has regressions in the websocket code, e.g. closing cleanly doesn't work at all
 aiohttp>=3,<3.7
 yarl>=1,<1.6
-mautrix>=0.14.0,<0.15
+mautrix>=0.14.0,<0.16
 multidict<5
 prometheus_client>=0.6,<0.13
 attrs

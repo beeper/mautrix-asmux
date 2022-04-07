@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from asyncpg import Connection
+from mautrix.util.async_db import Connection
 
 from .upgrade_table import upgrade_table
 

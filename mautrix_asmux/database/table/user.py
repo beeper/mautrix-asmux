@@ -1,6 +1,8 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import ClassVar, Dict, Optional, TypedDict
+from __future__ import annotations
+
+from typing import ClassVar, TypedDict
 import json
 import logging
 import secrets
@@ -13,7 +15,8 @@ from cryptography.hazmat.primitives.serialization import (
     PrivateFormat,
     PublicFormat,
 )
-import asyncpg
+
+from mautrix.util.async_db import Connection
 
 from .base import Base
 
@@ -52,10 +55,10 @@ class User(Base):
     id: str
     api_token: str
     login_token: str
-    proxy_config: Optional[ProxyConfig]
+    proxy_config: ProxyConfig | None
 
-    cache_by_id: ClassVar[Dict[str, "User"]] = {}
-    cache_by_api_token: ClassVar[Dict[str, "User"]] = {}
+    cache_by_id: ClassVar[dict[str, User]] = {}
+    cache_by_api_token: ClassVar[dict[str, User]] = {}
 
     def __attrs_post_init__(self) -> None:
         if self.proxy_config and isinstance(self.proxy_config, str):
@@ -86,7 +89,7 @@ class User(Base):
         return proxy_cfg
 
     @property
-    def proxy_config_json(self) -> Optional[str]:
+    def proxy_config_json(self) -> str | None:
         if self.proxy_config:
             return json.dumps(self.proxy_config)
         return None
@@ -113,7 +116,7 @@ class User(Base):
         }
 
     @classmethod
-    async def get(cls, id: str, *, conn: Optional[asyncpg.Connection] = None) -> Optional["User"]:
+    async def get(cls, id: str, *, conn: Connection | None = None) -> User | None:
         try:
             return cls.cache_by_id[id]
         except KeyError:
@@ -126,8 +129,8 @@ class User(Base):
 
     @classmethod
     async def find_by_api_token(
-        cls, api_token: str, *, conn: Optional[asyncpg.Connection] = None
-    ) -> Optional["User"]:
+        cls, api_token: str, *, conn: Connection | None = None
+    ) -> User | None:
         try:
             return cls.cache_by_api_token[api_token]
         except KeyError:
@@ -157,7 +160,7 @@ class User(Base):
                 await user.insert(conn=conn)
             return user
 
-    async def insert(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
+    async def insert(self, *, conn: Connection | None = None) -> None:
         conn = conn or self.db
         q = (
             'INSERT INTO "user" (id, api_token, login_token, proxy_config) '
@@ -174,10 +177,7 @@ class User(Base):
         self.log.info(f"Created user {self.id}")
 
     async def edit(
-        self,
-        proxy_config: Optional[ProxyConfig] = unset,
-        *,
-        conn: Optional[asyncpg.Connection] = None,
+        self, proxy_config: ProxyConfig | None = unset, *, conn: Connection | None = None
     ) -> None:
         conn = conn or self.db
         if proxy_config is unset:
@@ -187,7 +187,7 @@ class User(Base):
         await conn.execute(q, proxy_config_str, self.id)
         self.proxy_config = proxy_config
 
-    async def delete(self, *, conn: Optional[asyncpg.Connection] = None) -> None:
+    async def delete(self, *, conn: Connection | None = None) -> None:
         conn = conn or self.db
         self._delete_from_cache()
         await conn.execute('DELETE FROM "user" WHERE id=$1', self.id)
