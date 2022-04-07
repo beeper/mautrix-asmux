@@ -1,13 +1,13 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Any, Mapping, Type
+from typing import Any
 import json
 
 from aiohttp import web
 
 
 def _make_error(
-    error_cls: Type[web.HTTPError],
+    error_cls: type[web.HTTPError],
     errcode: str,
     error: str,
 ) -> web.HTTPError:
