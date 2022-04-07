@@ -9,3 +9,7 @@ line_length = 99
 [tool.black]
 line-length = 99
 target-version = ["py39"]
+
+[tool.mypy]
+# TODO: un-exclude and fixup!
+exclude = ["mautrix_asmux/database/upgrade/*"]
