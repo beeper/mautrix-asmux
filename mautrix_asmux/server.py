@@ -4,11 +4,11 @@ import asyncio
 import logging
 
 from aiohttp import web
-from yarl import URL
-import aiohttp
 
 # Annoyingly there are no stubbed types for asyncio redis yet
 from redis.asyncio import Redis  # type: ignore
+from yarl import URL
+import aiohttp
 
 from .api import (
     AppServiceHTTPHandler,
