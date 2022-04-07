@@ -18,6 +18,10 @@ class Room(Base):
 
     cache_by_id: ClassVar[Dict[RoomID, "Room"]] = {}
 
+    @classmethod
+    def empty_cache(cls) -> None:
+        cls.cache_by_id = {}
+
     def _add_to_cache(self) -> "Room":
         self.cache_by_id[self.id] = self
         return self

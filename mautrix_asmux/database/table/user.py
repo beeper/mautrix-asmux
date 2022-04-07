@@ -60,6 +60,11 @@ class User(Base):
     cache_by_id: ClassVar[dict[str, User]] = {}
     cache_by_api_token: ClassVar[dict[str, User]] = {}
 
+    @classmethod
+    def empty_cache(cls) -> None:
+        cls.cache_by_id = {}
+        cls.cache_by_api_token = {}
+
     def __attrs_post_init__(self) -> None:
         if self.proxy_config and isinstance(self.proxy_config, str):
             self.proxy_config = json.loads(self.proxy_config)

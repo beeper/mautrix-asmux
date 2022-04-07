@@ -41,6 +41,11 @@ class AppService(Base):
     cache_by_id: ClassVar[dict[UUID, AppService]] = {}
     cache_by_owner: ClassVar[dict[tuple[str, str], AppService]] = {}
 
+    @classmethod
+    def empty_cache(cls) -> None:
+        cls.cache_by_id = {}
+        cls.cache_by_owner = {}
+
     def __attrs_post_init__(self) -> None:
         if self.push_key and isinstance(self.push_key, str):
             self.push_key = PushKey.parse_json(self.push_key)
