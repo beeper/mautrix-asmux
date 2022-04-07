@@ -193,6 +193,7 @@ class ClientProxy:
 
         user_id = await self.get_user_id(auth)
         az = await self.find_appservice(req, header="X-Asmux-Auth", raise_errors=True)
+        assert az is not None
         if user_id != f"@{az.owner}{self.mxid_suffix}":
             raise Error.mismatching_user
 
