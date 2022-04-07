@@ -18,18 +18,6 @@ def _make_error(
 
 
 class _ErrorMeta(type):
-    @staticmethod
-    def _make_error(errcode: str, error: str) -> Mapping[str, str]:
-        return {
-            "text": json.dumps(
-                {
-                    "error": error,
-                    "errcode": errcode,
-                }
-            ),
-            "content_type": "application/json",
-        }
-
     @property
     def request_not_json(self) -> web.HTTPException:
         return _make_error(
