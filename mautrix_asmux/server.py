@@ -7,6 +7,9 @@ from aiohttp import web
 from yarl import URL
 import aiohttp
 
+# Annoyingly there are no stubbed types for asyncio redis yet
+from redis.asyncio import Redis  # type: ignore
+
 from .api import (
     AppServiceHTTPHandler,
     AppServiceProxy,
@@ -15,7 +18,7 @@ from .api import (
     ManagementAPI,
 )
 from .config import Config
-
+from .redis import RedisCacheHandler
 
 class MuxServer:
     log: logging.Logger = logging.getLogger("mau.server")
@@ -41,6 +44,9 @@ class MuxServer:
 
         self.http = http
 
+        self.redis = Redis.from_url(config["mux.redis"])
+        self.redis_cache_handler = RedisCacheHandler(self.redis)
+
         checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
         self.as_proxy = AppServiceProxy(
             server=self,
@@ -65,7 +71,12 @@ class MuxServer:
             http=self.http,
             login_shared_secret=config["homeserver.login_shared_secret"],
         )
-        self.management_api = ManagementAPI(config=config, http=self.http, server=self)
+        self.management_api = ManagementAPI(
+            config=config,
+            http=self.http,
+            server=self,
+            redis_cache_handler=self.redis_cache_handler,
+        )
 
         self.app = web.Application()
         self.as_proxy.register_routes(self.app)
@@ -82,6 +93,7 @@ class MuxServer:
         self.runner = web.AppRunner(self.app)
 
     async def start(self) -> None:
+        await self.redis.ping()
         self.log.debug("Starting web server")
         await self.runner.setup()
         site = web.TCPSite(self.runner, self.host, self.port)

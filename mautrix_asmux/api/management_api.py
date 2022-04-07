@@ -20,6 +20,7 @@ from mautrix.util.config import RecursiveDict, yaml
 
 from ..config import Config
 from ..database import AppService, Room, User
+from ..redis import RedisCacheHandler
 from .errors import Error, WebsocketErrorResponse, WebsocketNotConnected
 
 if TYPE_CHECKING:
@@ -60,13 +61,20 @@ class ManagementAPI:
     namespace_prefix: str
     config_templates: dict[str, RecursiveDict]
     as_token: str
+    redis_cache_handler: RedisCacheHandler
 
     app: web.Application
     mxauth_app: web.Application
     public_app: web.Application
     websocket_app: web.Application
 
-    def __init__(self, config: Config, http: ClientSession, server: "MuxServer") -> None:
+    def __init__(
+        self,
+        config: Config,
+        http: ClientSession,
+        server: "MuxServer",
+        redis_cache_handler: RedisCacheHandler,
+    ) -> None:
         self.global_prefix = config["appservice.namespace.prefix"]
         self.exclusive = config["appservice.namespace.exclusive"]
         self.server_name = config["homeserver.domain"]
@@ -332,6 +340,7 @@ class ManagementAPI:
     async def delete_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)
         await az.delete()
+        await self.redis_cache_handler.invalidate_az(az)
         return web.Response(status=204)
 
     @staticmethod
