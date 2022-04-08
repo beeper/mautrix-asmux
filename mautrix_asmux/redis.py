@@ -41,12 +41,12 @@ class RedisCacheHandler:
                 AppService.empty_cache()
                 Room.empty_cache()
                 User.empty_cache()
-            asycio.sleep(1)
+            await asyncio.sleep(1)
 
     async def handle_invalidate_az(self, message: bytes):
         az = await AppService.get(UUID(message.decode()))
         if az:
-            self.log.debug(f"Invaldiating cached AZ: {az}")
+            self.log.debug(f"Invalidating cached appservice: {az}")
             az._delete_from_cache()
 
     async def handle_invalidate_room(self, message: bytes):
