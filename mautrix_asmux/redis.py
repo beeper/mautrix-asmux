@@ -35,9 +35,9 @@ class RedisCacheHandler:
         while True:
             try:
                 for message in await self.pubsub.listen():
-                    logger.warning(f"Unexpected redis pubsub message: {message}")
+                    self.log.warning(f"Unexpected redis pubsub message: {message}")
             except Exception as e:
-                logger.critical(f"Redis failure, throwing caches: {e}")
+                self.log.critical(f"Redis failure, throwing caches: {e}")
                 AppService.empty_cache()
                 Room.empty_cache()
                 User.empty_cache()
