@@ -46,25 +46,31 @@ class RedisCacheHandler:
     async def handle_invalidate_as(self, message: bytes):
         az = await AppService.get(UUID(message.decode()))
         if az:
+            self.log.debug(f"Invaldiating cached AZ: {az}")
             az._delete_from_cache()
 
     async def handle_invalidate_room(self, message: bytes):
         room = await Room.get(RoomID(message.decode()))
         if room:
+            self.log.debug(f"Invalidating cached room: {room}")
             room._delete_from_cache()
 
     async def handle_invalidate_user(self, message: bytes):
         user = await User.get(message.decode())
         if user:
+            self.log.debug(f"Invalidating cached user: {user}")
             user._delete_from_cache()
 
     # Publish invalidation messages
 
     async def invalidate_az(self, az: AppService) -> None:
+        self.log.debug(f"Sending invalidate cached AZ: {az}")
         await self.redis.publish(AS_CACHE_CHANNEL, cast(str, az.id))
 
     async def invalidate_room(self, room: Room) -> None:
+        self.log.debug(f"Sending invalidate cached AZ: {room}")
         await self.redis.publish(ROOM_CACHE_CHANNEL, room.id)
 
     async def invalidate_user(self, user: User) -> None:
+        self.log.debug(f"Sending invalidate cached AZ: {user}")
         await self.redis.publish(USER_CACHE_CHANNEL, user.id)
