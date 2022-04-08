@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 from uuid import UUID
 import asyncio
 import json
@@ -68,13 +68,13 @@ class SyncProxyNotActive(MatrixStandardRequestError):
 
 
 class AppServiceWebsocketHandler:
-    log: TraceLogger = logging.getLogger("mau.api.as_websocket")
+    log: TraceLogger = cast(TraceLogger, logging.getLogger("mau.api.as_websocket"))
     websockets: dict[UUID, WebsocketHandler]
     queues: dict[UUID, AppServiceQueue]
     prev_wakeup_push: dict[UUID, float]
     remote_status_endpoint: Optional[str]
     bridge_status_endpoint: Optional[str]
-    sync_proxy: Optional[URL]
+    sync_proxy: URL
     sync_proxy_token: Optional[str]
     sync_proxy_own_address: Optional[str]
     hs_token: str
@@ -89,9 +89,7 @@ class AppServiceWebsocketHandler:
     def __init__(self, config: Config, mxid_prefix: str, mxid_suffix: str) -> None:
         self.remote_status_endpoint = config["mux.remote_status_endpoint"]
         self.bridge_status_endpoint = config["mux.bridge_status_endpoint"]
-        self.sync_proxy = (
-            URL(config["mux.sync_proxy.url"]) if config["mux.sync_proxy.url"] else None
-        )
+        self.sync_proxy = URL(config["mux.sync_proxy.url"])
         self.sync_proxy_token = config["mux.sync_proxy.token"]
         self.sync_proxy_own_address = config["mux.sync_proxy.asmux_address"]
         self.hs_token = config["appservice.hs_token"]
@@ -100,7 +98,6 @@ class AppServiceWebsocketHandler:
         self.websockets = {}
         self.queues = {}
         self.prev_wakeup_push = {}
-        self.requests = {}
         self._stopping = False
         self.checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
         self.api_server_sess = aiohttp.ClientSession(
@@ -175,9 +172,11 @@ class AppServiceWebsocketHandler:
             self.log.warning(f"Failed to send updated bridge state: {e}")
 
     @staticmethod
-    async def _get_response(resp: aiohttp.ClientResponse) -> Dict[str, Any]:
+    async def _get_response(resp: aiohttp.ClientResponse) -> Optional[Dict[str, Any]]:
         text = await resp.text()
-        errcode = error = resp_data = None
+        errcode = ""
+        error = ""
+        resp_data = None
         try:
             resp_data = await resp.json()
             errcode = resp_data["errcode"]
@@ -188,7 +187,9 @@ class AppServiceWebsocketHandler:
             raise make_request_error(resp.status, text, errcode, error)
         return resp_data
 
-    async def start_sync_proxy(self, az: AppService, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def start_sync_proxy(
+        self, az: AppService, data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         url = self.sync_proxy.with_path("/_matrix/client/unstable/fi.mau.syncproxy") / str(az.id)
         headers = {"Authorization": f"Bearer {self.sync_proxy_token}"}
         req = {
@@ -243,13 +244,13 @@ class AppServiceWebsocketHandler:
             log=self.log.getChild(az.name).getChild(identifier),
             identifier=identifier,
         )
-        ws.set_handler("bridge_status", lambda _, data: self.send_remote_status(az, data))
+        ws.set_handler("bridge_status", lambda _, data: self.send_remote_status(az, data))  # type: ignore
         ws.set_handler(
-            "message_checkpoint", lambda _, data: send_message_checkpoints(self, az, data)
+            "message_checkpoint", lambda _, data: send_message_checkpoints(self, az, data)  # type: ignore
         )
-        ws.set_handler("push_key", lambda _, data: az.set_push_key(PushKey.deserialize(data)))
-        ws.set_handler("start_sync", lambda _, data: self.start_sync_proxy(az, data))
-        ws.set_handler("ping", lambda ws, _: self.ping_server(az, ws))
+        ws.set_handler("push_key", lambda _, data: az.set_push_key(PushKey.deserialize(data)))  # type: ignore
+        ws.set_handler("start_sync", lambda _, data: self.start_sync_proxy(az, data))  # type: ignore
+        ws.set_handler("ping", lambda ws, _: self.ping_server(az, ws))  # type: ignore
         await ws.prepare(req)
         try:
             old_websocket = self.websockets.pop(az.id)
@@ -359,6 +360,7 @@ class AppServiceWebsocketHandler:
             asyncio.create_task(self.wakeup_appservice(az))
         timeout = FIRST_SEND_TIMEOUT if ws.timeouts == 0 else RETRY_SEND_TIMEOUT
         try:
+            txn: Events
             async with queue.next() as txn:
                 await self._send_next_txn(az, ws, txn, timeout)
         except asyncio.TimeoutError:
@@ -422,6 +424,7 @@ class AppServiceWebsocketHandler:
         return True
 
     async def wakeup_appservice(self, az: AppService) -> None:
+        assert az.push_key is not None
         try:
             self.log.debug(f"Trying to wake up {az.name} via Sygnal push")
             resp: aiohttp.ClientResponse
@@ -496,7 +499,7 @@ class AppServiceWebsocketHandler:
                 await asyncio.sleep(0.25)
                 if attempts > 20:
                     raise WebsocketNotConnected()
-        return await asyncio.wait_for(ws.request(command, raise_errors=True, **data), timeout=10)
+        return await asyncio.wait_for(ws.request(command, raise_errors=True, **data), timeout=10)  # type: ignore
 
     async def ping(self, az: AppService) -> GlobalBridgeState:
         try:
@@ -510,4 +513,7 @@ class AppServiceWebsocketHandler:
         except Exception as e:
             self.log.warning(f"Failed to ping {az.name} ({az.id}) via websocket", exc_info=True)
             return make_ping_error("websocket-fatal-error", message=str(e))
-        return GlobalBridgeState.deserialize(migrate_state_data(raw_pong))
+        if raw_pong:
+            return GlobalBridgeState.deserialize(migrate_state_data(raw_pong))
+        self.log.warning(f"Failed to ping {az.name} ({az.id}) via websocket")
+        return make_ping_error("websocket-unknown-error")

@@ -2,7 +2,7 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from __future__ import annotations
 
-from typing import ClassVar, Iterable
+from typing import ClassVar, Iterable, cast
 from uuid import UUID, uuid4
 import base64
 import hashlib
@@ -68,21 +68,20 @@ class AppService(Base):
         del self.cache_by_owner[(self.owner, self.prefix)]
 
     @classmethod
-    async def get(cls, id: UUID, *, conn: Connection | None = None) -> AppService | None:
+    async def get(cls, az_id: UUID, *, conn: Connection | None = None) -> AppService | None:
         try:
-            return cls.cache_by_id[id]
+            return cls.cache_by_id[az_id]
         except KeyError:
             pass
-        conn = conn or cls.db
-        row = await conn.fetchrow(
+        row = await (conn or cls.db).fetchrow(
             "SELECT appservice.id, owner, prefix, bot, address, "
             '       hs_token, as_token, push, "user".login_token, '
             "       config_password_hash, config_password_expiry, push_key "
             'FROM appservice JOIN "user" ON "user".id=appservice.owner '
             "WHERE appservice.id=$1::uuid",
-            id,
+            az_id,
         )
-        return AppService(**row)._add_to_cache() if row else None
+        return AppService(**cast(dict, row))._add_to_cache() if row else None
 
     @classmethod
     async def find(
@@ -92,8 +91,7 @@ class AppService(Base):
             return cls.cache_by_owner[(owner, prefix)]
         except KeyError:
             pass
-        conn = conn or cls.db
-        row = await conn.fetchrow(
+        row = await (conn or cls.db).fetchrow(
             "SELECT appservice.id, owner, prefix, bot, address, hs_token, "
             '       as_token, push, "user".login_token, '
             "       config_password_hash, config_password_expiry, push_key "
@@ -102,7 +100,7 @@ class AppService(Base):
             owner,
             prefix,
         )
-        return AppService(**row)._add_to_cache() if row else None
+        return AppService(**cast(dict, row))._add_to_cache() if row else None
 
     @classmethod
     async def find_or_create(
@@ -139,8 +137,7 @@ class AppService(Base):
     async def get_many(
         cls, ids: list[UUID], *, conn: Connection | None = None
     ) -> Iterable[AppService]:
-        conn = conn or cls.db
-        rows = await conn.fetch(
+        rows = await (conn or cls.db).fetch(
             "SELECT appservice.id, owner, prefix, bot, address, hs_token,"
             '       as_token, push, "user".login_token, '
             "       config_password_hash, config_password_expiry, push_key "
@@ -151,8 +148,7 @@ class AppService(Base):
         return (AppService(**row)._add_to_cache() for row in rows)
 
     async def insert(self, *, conn: Connection | None = None) -> None:
-        conn = conn or self.db
-        await conn.execute(
+        await (conn or self.db).execute(
             "INSERT INTO appservice "
             "(id, owner, prefix, bot, address, hs_token, as_token, push) "
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -171,8 +167,9 @@ class AppService(Base):
         if address is None or self.address == address:
             return
         self.address = address
-        conn = conn or self.db
-        await conn.execute("UPDATE appservice SET address=$2 WHERE id=$1", self.id, self.address)
+        await (conn or self.db).execute(
+            "UPDATE appservice SET address=$2 WHERE id=$1", self.id, self.address
+        )
 
     async def set_push(self, push: bool) -> None:
         if push is None or push == self.push:
@@ -197,6 +194,7 @@ class AppService(Base):
         return base64.b32encode(token).decode("utf-8").rstrip("=")
 
     def check_password(self, password: str) -> bool:
+        assert self.config_password_hash is not None
         pad_length = math.ceil(len(password) / 8) * 8 - len(password)
         padded_password = password.upper() + "=" * pad_length
         hashed_password = hashlib.sha256(base64.b32decode(padded_password)).digest()
@@ -219,6 +217,5 @@ class AppService(Base):
         )
 
     async def delete(self, *, conn: Connection | None = None) -> None:
-        conn = conn or self.db
         self._delete_from_cache()
-        await conn.execute("DELETE FROM appservice WHERE id=$1", self.id)
+        await (conn or self.db).execute("DELETE FROM appservice WHERE id=$1", self.id)

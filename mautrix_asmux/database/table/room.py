@@ -32,7 +32,7 @@ class Room(Base):
     @classmethod
     async def get(cls, room_id: RoomID) -> Optional["Room"]:
         try:
-            return cls.cache_by_id[id]
+            return cls.cache_by_id[room_id]
         except KeyError:
             pass
         row = await cls.db.fetchrow("SELECT id, owner, deleted FROM room WHERE id=$1", room_id)

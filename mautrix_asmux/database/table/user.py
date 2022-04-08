@@ -2,7 +2,7 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from __future__ import annotations
 
-from typing import ClassVar, TypedDict
+from typing import ClassVar, TypedDict, cast
 import json
 import logging
 import secrets
@@ -83,7 +83,9 @@ class User(Base):
         data.pop("proxy_config")
         return data
 
-    def proxy_config_response(self, include_private_key: bool = False) -> ProxyConfig:
+    def proxy_config_response(self, include_private_key: bool = False) -> ProxyConfig | None:
+        if not self.proxy_config:
+            return None
         proxy_cfg = {
             "ssh": {**self.proxy_config["ssh"]},
             "socks": {**self.proxy_config["socks"]},
@@ -91,7 +93,7 @@ class User(Base):
         if not include_private_key:
             del proxy_cfg["ssh"]["privateKey"]
             del proxy_cfg["ssh"]["passphrase"]
-        return proxy_cfg
+        return cast(ProxyConfig, proxy_cfg)
 
     @property
     def proxy_config_json(self) -> str | None:
@@ -121,16 +123,15 @@ class User(Base):
         }
 
     @classmethod
-    async def get(cls, id: str, *, conn: Connection | None = None) -> User | None:
+    async def get(cls, user_id: str, *, conn: Connection | None = None) -> User | None:
         try:
-            return cls.cache_by_id[id]
+            return cls.cache_by_id[user_id]
         except KeyError:
             pass
-        conn = conn or cls.db
-        row = await conn.fetchrow(
-            "SELECT id, api_token, login_token, proxy_config " 'FROM "user" WHERE id=$1', id
+        row = await (conn or cls.db).fetchrow(
+            "SELECT id, api_token, login_token, proxy_config " 'FROM "user" WHERE id=$1', user_id
         )
-        return User(**row)._add_to_cache() if row else None
+        return User(**cast(dict, row))._add_to_cache() if row else None
 
     @classmethod
     async def find_by_api_token(
@@ -140,12 +141,11 @@ class User(Base):
             return cls.cache_by_api_token[api_token]
         except KeyError:
             pass
-        conn = conn or cls.db
-        row = await conn.fetchrow(
+        row = await (conn or cls.db).fetchrow(
             "SELECT id, api_token, login_token, proxy_config " 'FROM "user" WHERE api_token=$1',
             api_token,
         )
-        return User(**row)._add_to_cache() if row else None
+        return User(**cast(dict, row))._add_to_cache() if row else None
 
     @classmethod
     async def get_or_create(cls, id: str) -> "User":
@@ -166,12 +166,11 @@ class User(Base):
             return user
 
     async def insert(self, *, conn: Connection | None = None) -> None:
-        conn = conn or self.db
         q = (
             'INSERT INTO "user" (id, api_token, login_token, proxy_config) '
             "VALUES ($1, $2, $3, $4)"
         )
-        await conn.execute(
+        await (conn or self.db).execute(
             q,
             self.id,
             self.api_token,
@@ -182,17 +181,18 @@ class User(Base):
         self.log.info(f"Created user {self.id}")
 
     async def edit(
-        self, proxy_config: ProxyConfig | None = unset, *, conn: Connection | None = None
+        self,
+        proxy_config: ProxyConfig | None = cast(None, unset),
+        *,
+        conn: Connection | None = None,
     ) -> None:
-        conn = conn or self.db
         if proxy_config is unset:
             proxy_config = self.proxy_config
         proxy_config_str = json.dumps(proxy_config) if proxy_config else None
         q = 'UPDATE "user" SET proxy_config=$1 WHERE id=$2'
-        await conn.execute(q, proxy_config_str, self.id)
+        await (conn or self.db).execute(q, proxy_config_str, self.id)
         self.proxy_config = proxy_config
 
     async def delete(self, *, conn: Connection | None = None) -> None:
-        conn = conn or self.db
         self._delete_from_cache()
-        await conn.execute('DELETE FROM "user" WHERE id=$1', self.id)
+        await (conn or self.db).execute('DELETE FROM "user" WHERE id=$1', self.id)

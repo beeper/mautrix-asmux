@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, cast
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -96,7 +96,7 @@ class ClientProxy:
         self.http = http
         self.redis = redis
 
-        self.app = web.Application(middlewares=[self.cancel_logger])
+        self.app = web.Application(middlewares=[self.cancel_logger])  # type: ignore
         self.app.router.add_post("/client/r0/login", self.proxy_login)
         self.app.router.add_post("/client/v3/login", self.proxy_login)
         self.app.router.add_get("/client/unstable/fi.mau.as_sync", server.as_websocket.handle_ws)
@@ -132,7 +132,9 @@ class ClientProxy:
             raise
 
     @asynccontextmanager
-    async def _get(self, url: URL, auth: str, raise_error: bool = True) -> web.Response:
+    async def _get(
+        self, url: URL, auth: str, raise_error: bool = True
+    ) -> AsyncIterator[aiohttp.ClientResponse]:
         try:
             async with self.http.get(url, headers={"Authorization": f"Bearer {auth}"}) as resp:
                 if raise_error and resp.status >= 400:
@@ -144,7 +146,9 @@ class ClientProxy:
             raise Error.failed_to_contact_homeserver
 
     @asynccontextmanager
-    async def _put(self, url: URL, auth: str, json: dict[str, Any]) -> web.Response:
+    async def _put(
+        self, url: URL, auth: str, json: dict[str, Any]
+    ) -> AsyncIterator[aiohttp.ClientResponse]:
         try:
             async with self.http.put(
                 url, headers={"Authorization": f"Bearer {auth}"}, json=json
@@ -242,7 +246,7 @@ class ClientProxy:
                 req, _spec_override="client", _path_override="v3/login", _body_override=body
             )
         if await self.convert_login_password(json_body):
-            body = json.dumps(json_body)
+            body = json.dumps(json_body).encode()
             headers["Content-Type"] = "application/json"
             # TODO remove this everywhere (in _proxy)?
             del headers["Content-Length"]
@@ -408,7 +412,7 @@ class ClientProxy:
             self.log.debug(f"Got HTTP {resp.status} proxying request {self.request_log_fmt(req)}")
         return web.Response(status=resp.status, headers=resp.headers, body=resp.content), resp
 
-    async def _find_login_token(self, user_id: UserID) -> Optional[str]:
+    async def _find_login_token(self, user_id: Optional[str]) -> Optional[str]:
         if not user_id:
             return None
         elif user_id.startswith(self.mxid_prefix) and user_id.endswith(self.mxid_suffix):
@@ -419,7 +423,7 @@ class ClientProxy:
                 return None
             return az.login_token
         else:
-            localpart, _ = ClientAPI.parse_user_id(user_id)
+            localpart, _ = ClientAPI.parse_user_id(cast(UserID, user_id))
             user = await User.get(localpart)
             if not user:
                 return None
@@ -441,7 +445,7 @@ class ClientProxy:
                         return False
                     user_id = data["identifier"]["user"]
             login_token = az.login_token if az else await self._find_login_token(user_id)
-            if not login_token:
+            if not login_token or not user_id:
                 return False
             expected_password = hmac.new(
                 login_token.encode("utf-8"), user_id.encode("utf-8"), hashlib.sha512

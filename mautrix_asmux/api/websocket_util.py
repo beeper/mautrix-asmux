@@ -139,12 +139,12 @@ class WebsocketHandler:
             message = f"Closing websocket ({code} / {status})"
             self.log.debug(message)
             self.cancel_queue_task(message)
-            message = (
+            res_message = (
                 json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
                 if status
-                else None
+                else b""
             )
-            ret = await self._ws.close(code=code, message=message)
+            ret = await self._ws.close(code=code, message=res_message)
             self.log.debug(f"Websocket closed: {ret}")
             self.dead = True
         except Exception:
@@ -178,7 +178,7 @@ class WebsocketHandler:
         )
         return await fut
 
-    def prepare(self, req: web.Request) -> Awaitable[None]:
+    def prepare(self, req: web.Request) -> Awaitable[Any]:
         return self._ws.prepare(req)
 
     async def handle(self) -> None:
@@ -196,7 +196,8 @@ class WebsocketHandler:
                 elif msg.type == WSMsgType.TEXT:
                     if self.dead:
                         self.log.warning("Received data even though websocket is marked as dead")
-                        self._ws._writer.transport.abort()
+                        if self._ws._writer:
+                            self._ws._writer.transport.abort()
                         continue
                     try:
                         self._handle_text(msg)

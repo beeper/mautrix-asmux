@@ -37,5 +37,6 @@ class PushKey(SerializableAttrs):
             }
         }
 
+        assert self._sess is not None
         async with self._sess.post(self.url, json=payload) as resp:
             yield resp

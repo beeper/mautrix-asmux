@@ -44,7 +44,7 @@ class AppServiceHTTPHandler:
             f"({len(events.pdu)}p/{len(events.edu)}e) to {url}"
         )
         retries = 10 if len(events.pdu) > 0 else 2
-        backoff = 1
+        backoff = 1.0
         last_error = ""
         while attempt < retries:
             attempt += 1
@@ -56,10 +56,10 @@ class AppServiceHTTPHandler:
                     url.with_query({"access_token": az.hs_token}), json=events.serialize()
                 )
             except ClientError as e:
-                last_error = e
+                last_error = str(e)
                 self.log.debug(f"{err_prefix}: {last_error}")
             except Exception:
-                last_error = None
+                last_error = ""
                 self.log.exception(f"{err_prefix}")
                 break
             else:

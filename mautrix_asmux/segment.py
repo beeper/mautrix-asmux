@@ -28,6 +28,7 @@ per_user_event_counter: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultd
 
 
 async def _track(event: str, user_id: str, **properties: str) -> None:
+    assert token is not None
     try:
         per_user_counter[user_id] += 1
         per_user_event_counter[user_id][event] += 1
@@ -71,8 +72,10 @@ def _get_tracking_event_type(appservice: "AppService", event: "JSON") -> Optiona
     return "Outgoing Matrix event"
 
 
-def track_event(az: "AppService", pdu: "JSON") -> None:
+def track_event(az: Optional["AppService"], pdu: "JSON") -> None:
     if not token:
+        return
+    if not az:
         return
     event_type = _get_tracking_event_type(az, pdu)
     if event_type:

@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import TYPE_CHECKING, Iterable, List, Optional
+from typing import TYPE_CHECKING, AsyncIterator, List, Optional
 from contextlib import asynccontextmanager
 import asyncio
 
@@ -47,13 +47,14 @@ class AppServiceQueue:
         self._cleanup_task = None
 
     @asynccontextmanager
-    async def next(self) -> Iterable[Events]:
+    async def next(self) -> AsyncIterator[Events]:
         if self._current_txn is None:
             if self._txn_waiter is not None and not self._txn_waiter.done():
                 self._txn_waiter.set_exception(QueueWaiterOverridden())
             self._txn_waiter = self.loop.create_future()
             await self._txn_waiter
 
+        assert self._current_txn is not None
         yield self._current_txn
 
         self._current_txn = self._next_txn

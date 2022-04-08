@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional, cast
 from uuid import UUID
 import asyncio
 import base64
@@ -93,7 +93,7 @@ class ManagementAPI:
         self.server = server
         self.redis_cache_handler = redis_cache_handler
 
-        self.app = web.Application(middlewares=[self.check_auth])
+        self.app = web.Application(middlewares=[self.check_auth])  # type: ignore
         self.app.router.add_get("/user/{id}", self.get_user)
         self.app.router.add_put("/user/{id}", self.put_user)
         self.app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
@@ -108,7 +108,7 @@ class ManagementAPI:
         self.app.router.add_delete("/appservice/{owner}/{prefix}", self.delete_appservice)
         self.app.router.add_delete("/room/{room_id}", self.delete_room)
 
-        self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])
+        self.mxauth_app = web.Application(middlewares=[self.check_mx_auth])  # type: ignore
         self.mxauth_app.router.add_get("/user/{id}/proxy", self.get_user_proxy)
         self.mxauth_app.router.add_post("/appservice/{id}/exec/{command}", self.exec_appservice)
         self.mxauth_app.router.add_post(
@@ -119,7 +119,7 @@ class ManagementAPI:
         self.public_app.router.add_get("/config/{prefix}/register", self.register_config)
         self.public_app.router.add_get("/config/{prefix}/download", self.download_config)
 
-        self.websocket_app = web.Application(middlewares=[self.check_ws_auth])
+        self.websocket_app = web.Application(middlewares=[self.check_ws_auth])  # type: ignore
 
         self._cors = {
             "Access-Control-Allow-Origin": "*",
@@ -182,6 +182,7 @@ class ManagementAPI:
 
     async def _mx_auth_callback(self, req: web.Request, auth: str) -> None:
         user_id = await self.server.cs_proxy.get_user_id(auth)
+        assert user_id is not None
         localpart, homeserver = ClientAPI.parse_user_id(user_id)
         # get_user_id will only use the local server, so this should never fail
         assert homeserver == self.server_name, "Mismatching homeserver in user ID"
@@ -239,9 +240,9 @@ class ManagementAPI:
             "rate_limited": True,
         }
         if config_password:
-            registration["com.beeper.asmux"]["config_password"] = config_password
-            registration["com.beeper.asmux"]["config_password_lifetime"] = config_password_lifetime
-        return registration
+            registration["com.beeper.asmux"]["config_password"] = config_password  # type: ignore
+            registration["com.beeper.asmux"]["config_password_lifetime"] = config_password_lifetime  # type: ignore
+        return cast(JSON, registration)
 
     async def _get_appservice(self, req: web.Request) -> AppService:
         try:
@@ -317,10 +318,10 @@ class ManagementAPI:
         if not proxy_config or req.query.get("regenerate", "false").lower() in ("1", "t", "true"):
             proxy_config = {
                 "socks": user.generate_socks_config(),
-                "ssh": user.generate_ssh_key(),
+                "ssh": user.generate_ssh_key(),  # type: ignore
             }
         proxy_config["ssh"] = {
-            **data,
+            **data,  # type: ignore
             "publicKey": proxy_config["ssh"]["publicKey"],
             "privateKey": proxy_config["ssh"]["privateKey"],
             "passphrase": proxy_config["ssh"]["passphrase"],

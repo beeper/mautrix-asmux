@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import TYPE_CHECKING, Any, Awaitable, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Awaitable, List, Optional, Tuple, Union, cast
 from collections import defaultdict
 from uuid import UUID
 import asyncio
@@ -59,11 +59,11 @@ def make_ping_error(
     message: Optional[str] = None,
     state_event: BridgeStateEvent = BridgeStateEvent.BRIDGE_UNREACHABLE,
 ) -> GlobalBridgeState:
-    state_event = BridgeState(state_event=state_event, error=error, message=message)
-    return GlobalBridgeState(remote_states=None, bridge_state=state_event)
+    bridge_state = BridgeState(state_event=state_event, error=error, message=message)
+    return GlobalBridgeState(remote_states=None, bridge_state=bridge_state)
 
 
-def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> dict[str, Any]:
+def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> JSON:
     if "ok" in raw_pong and "state_event" not in raw_pong:
         raw_pong["state_event"] = (
             BridgeStateEvent.CONNECTED if raw_pong["ok"] else BridgeStateEvent.UNKNOWN_ERROR
@@ -78,10 +78,12 @@ def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> dict
                 "source": "asmux",
             },
         }
-    return raw_pong
+    return cast(JSON, raw_pong)
 
 
-async def send_message_checkpoints(self: "CheckpointSender", az: AppService, data: JSON) -> None:
+async def send_message_checkpoints(
+    self: "CheckpointSender", az: AppService, data: Union[dict[str, Any], JSON]
+) -> None:
     url = f"{self.checkpoint_url}/bridgebox/{az.owner}/bridge/{az.prefix}/send_message_metrics"
     headers = {"Authorization": f"Bearer {az.real_as_token}"}
     try:
@@ -111,7 +113,7 @@ class Events:
         if self.edu:
             output["ephemeral"] = self.edu
         if self.otk_count:
-            output["device_one_time_keys_count"] = {
+            output["device_one_time_keys_count"] = {  # type: ignore
                 user_id: otk.serialize() for user_id, otk in self.otk_count.items()
             }
         if self.device_lists.changed or self.device_lists.left:
@@ -168,7 +170,7 @@ FAILED_EVENTS = Counter(
 
 
 class AppServiceProxy(AppServiceServerMixin):
-    log: TraceLogger = logging.getLogger("mau.api.as_proxy")
+    log: TraceLogger = cast(TraceLogger, logging.getLogger("mau.api.as_proxy"))
     http: aiohttp.ClientSession
 
     hs_token: str
@@ -240,7 +242,7 @@ class AppServiceProxy(AppServiceServerMixin):
             return
 
         self.log.debug(f"Sending message send checkpoints for {az.name} (step: HOMESERVER/CLIENT)")
-        await send_message_checkpoints(self, az, {"checkpoints": checkpoints})
+        await send_message_checkpoints(self, az, cast(JSON, {"checkpoints": checkpoints}))
 
     async def post_events(self, az: AppService, events: Events) -> str:
         async with self.locks[az.id]:
@@ -284,7 +286,7 @@ class AppServiceProxy(AppServiceServerMixin):
         except Exception as e:
             self.log.exception(f"Fatal error pinging {az.name}")
             pong = make_ping_error("ping-fatal-error", message=str(e))
-        user_id = f"@{az.owner}{self.mxid_suffix}"
+        user_id = UserID(f"@{az.owner}{self.mxid_suffix}")
         pong.bridge_state.fill()
         pong.bridge_state.user_id = user_id
         pong.bridge_state.remote_id = None
@@ -327,7 +329,7 @@ class AppServiceProxy(AppServiceServerMixin):
         return room, az
 
     async def _collect_events(
-        self, events: list[JSON], output: dict[UUID, Events], ephemeral: bool
+        self, events: Optional[list[JSON]], output: dict[UUID, Events], ephemeral: bool
     ) -> None:
         for event in events or []:
             evt_type = event.get("type", "")
@@ -376,26 +378,26 @@ class AppServiceProxy(AppServiceServerMixin):
     ) -> None:
         if not otk_count:
             return
-        for user_id, otk_count in otk_count.items():
+        for user_id, user_otk_count in otk_count.items():
             az = await self._get_az_from_user_id(user_id)
             if az:
                 # TODO metrics/logs for received OTK counts?
-                output[az.id].otk_count[user_id] = otk_count
+                output[az.id].otk_count[user_id] = user_otk_count
 
     async def _send_transactions(
         self, events: dict[UUID, Events], synchronous_to: list[str]
     ) -> dict[str, Any]:
         wait_for: dict[UUID, Awaitable[str]] = {}
 
-        for appservice_id, events in events.items():
+        for appservice_id, az_events in events.items():
             appservice = await AppService.get(appservice_id)
             if appservice is None:
                 continue
             self.log.debug(
-                f"Preparing to send {len(events.pdu)} PDUs and {len(events.edu)} EDUs "
-                f"from transaction {events.txn_id} to {appservice.name}"
+                f"Preparing to send {len(az_events.pdu)} PDUs and {len(az_events.edu)} EDUs "
+                f"from transaction {az_events.txn_id} to {appservice.name}"
             )
-            task = asyncio.create_task(self.post_events(appservice, events))
+            task = asyncio.create_task(self.post_events(appservice, az_events))
             if str(appservice.id) in synchronous_to:
                 wait_for[appservice.id] = task
 
@@ -404,8 +406,8 @@ class AppServiceProxy(AppServiceServerMixin):
 
         sent_to: dict[str, str] = {}
         if wait_for:
-            for appservice_id, task in wait_for.items():
-                sent_to[str(appservice_id)] = await task
+            for appservice_id, az_task in wait_for.items():
+                sent_to[str(appservice_id)] = await az_task
         return {
             "com.beeper.asmux.sent_to": sent_to,
             "com.beeper.asmux.synchronous": True,
@@ -439,7 +441,7 @@ class AppServiceProxy(AppServiceServerMixin):
         # await self._collect_device_lists(device_lists, output=data)
         # Special case to handle device lists from the sync proxy
         if len(synchronous_to) == 1:
-            data[UUID(synchronous_to[0])].device_lists = device_lists
+            data[UUID(synchronous_to[0])].device_lists = device_lists or DeviceLists()
 
         return await self._send_transactions(data, synchronous_to)
 
