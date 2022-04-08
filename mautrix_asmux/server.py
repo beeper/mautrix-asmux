@@ -5,8 +5,7 @@ import logging
 
 from aiohttp import web
 
-# Annoyingly there are no stubbed types for asyncio redis yet
-from redis.asyncio import Redis  # type: ignore
+from aioredis import Redis
 from yarl import URL
 import aiohttp
 
