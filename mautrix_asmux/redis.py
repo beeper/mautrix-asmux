@@ -18,8 +18,12 @@ class RedisCacheHandler:
 
     def __init__(self, redis: Redis) -> None:
         self.redis = redis
+
+    async def setup(self):
+        self.log.info("Setting up Redis cache invalidation subscriptions")
+
         self.pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
-        self.pubsub.subscribe(
+        await self.pubsub.subscribe(
             **{
                 APPSERVICE_CACHE_CHANNEL: self.handle_invalidate_az,
                 ROOM_CACHE_CHANNEL: self.handle_invalidate_room,
@@ -34,7 +38,7 @@ class RedisCacheHandler:
     async def read_pubsub_messages(self):
         while True:
             try:
-                for message in await self.pubsub.listen():
+                async for message in self.pubsub.listen():
                     self.log.warning(f"Unexpected redis pubsub message: {message}")
             except Exception as e:
                 self.log.critical(f"Redis failure, throwing caches: {e}")

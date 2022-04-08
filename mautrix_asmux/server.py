@@ -4,7 +4,6 @@ import asyncio
 import logging
 
 from aiohttp import web
-
 from aioredis import Redis
 from yarl import URL
 import aiohttp
@@ -94,6 +93,7 @@ class MuxServer:
 
     async def start(self) -> None:
         await self.redis.ping()
+        await self.redis_cache_handler.setup()
         self.log.debug("Starting web server")
         await self.runner.setup()
         site = web.TCPSite(self.runner, self.host, self.port)
