@@ -5,7 +5,7 @@ from mautrix.util.async_db import Connection
 from .upgrade_table import upgrade_table
 
 
-@upgrade_table.register(description="Initial revision")
+@upgrade_table.register(description="Initial revision")  # type: ignore
 async def upgrade_v1(conn: Connection) -> None:
     await conn.execute(
         """

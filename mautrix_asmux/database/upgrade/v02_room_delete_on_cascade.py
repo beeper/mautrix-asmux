@@ -5,7 +5,7 @@ from mautrix.util.async_db import Connection
 from .upgrade_table import upgrade_table
 
 
-@upgrade_table.register(description="Add ON CASCADE DELETE for rooms")
+@upgrade_table.register(description="Add ON CASCADE DELETE for rooms")  # type: ignore
 async def upgrade_v2(conn: Connection) -> None:
     row = await conn.fetchrow(
         "SELECT constraint_name FROM information_schema.table_constraints "

@@ -5,7 +5,7 @@ from mautrix.util.async_db import Connection
 from .upgrade_table import upgrade_table
 
 
-@upgrade_table.register(description="Replace VARCHAR(255) with TEXT")
+@upgrade_table.register(description="Replace VARCHAR(255) with TEXT")  # type: ignore
 async def upgrade_v7(conn: Connection) -> None:
     await conn.execute("ALTER TABLE room ALTER COLUMN id TYPE TEXT")
     await conn.execute("ALTER TABLE appservice ALTER COLUMN address TYPE TEXT")
