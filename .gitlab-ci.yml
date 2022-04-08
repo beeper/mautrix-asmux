@@ -20,6 +20,7 @@ lint:
   image: python:latest
   before_script:
     - pip install -r dev-requirements.txt
+    - pip install .
   script:
     - pre-commit run -av trailing-whitespace
     - pre-commit run -av end-of-file-fixer
