@@ -8,7 +8,7 @@ from aioredis import Redis
 from mautrix.types import RoomID
 from mautrix_asmux.database.table import AppService, Room, User
 
-AS_CACHE_CHANNEL = "appservice-cache-invalidation"
+APPSERVICE_CACHE_CHANNEL = "appservice-cache-invalidation"
 ROOM_CACHE_CHANNEL = "room-cache-invalidation"
 USER_CACHE_CHANNEL = "user-cache-invalidation"
 
@@ -21,7 +21,7 @@ class RedisCacheHandler:
         self.pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
         self.pubsub.subscribe(
             **{
-                AS_CACHE_CHANNEL: self.handle_invalidate_as,
+                APPSERVICE_CACHE_CHANNEL: self.handle_invalidate_az,
                 ROOM_CACHE_CHANNEL: self.handle_invalidate_room,
                 USER_CACHE_CHANNEL: self.handle_invalidate_user,
             }
@@ -43,7 +43,7 @@ class RedisCacheHandler:
                 User.empty_cache()
             asycio.sleep(1)
 
-    async def handle_invalidate_as(self, message: bytes):
+    async def handle_invalidate_az(self, message: bytes):
         az = await AppService.get(UUID(message.decode()))
         if az:
             self.log.debug(f"Invaldiating cached AZ: {az}")
