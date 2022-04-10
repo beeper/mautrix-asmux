@@ -12,6 +12,8 @@ import logging
 import time
 
 from aiohttp import hdrs, web
+from aioredis import Redis
+from aioredis.lock import Lock
 from multidict import CIMultiDict, MultiDict
 from yarl import URL
 import aiohttp
@@ -68,7 +70,7 @@ class ClientProxy:
     as_token: str
     login_shared_secret: Optional[bytes]
 
-    dm_locks: dict[UserID, asyncio.Lock]
+    dm_locks: dict[UserID, Lock]
     user_ids: dict[str, UserID]
 
     def __init__(
@@ -80,6 +82,7 @@ class ClientProxy:
         as_token: str,
         login_shared_secret: Optional[str],
         http: aiohttp.ClientSession,
+        redis: Redis,
     ) -> None:
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
@@ -88,9 +91,10 @@ class ClientProxy:
         self.login_shared_secret = (
             login_shared_secret.encode("utf-8") if login_shared_secret else None
         )
-        self.dm_locks = defaultdict(lambda: asyncio.Lock())
+        self.dm_locks = {}
         self.user_ids = {}
         self.http = http
+        self.redis = redis
 
         self.app = web.Application(middlewares=[self.cancel_logger])
         self.app.router.add_post("/client/r0/login", self.proxy_login)
@@ -179,6 +183,12 @@ class ClientProxy:
             if not (user_id.startswith(prefix) and user_id.endswith(suffix) and user_id != bot)
         }
 
+    def get_dms_lock(self, user_id):
+        if user_id not in self.dm_locks:
+            lock = Lock(self.redis, f"dms-lock-{user_id}")
+            self.dm_locks[user_id] = lock
+        return self.dm_locks[user_id]
+
     async def update_dms(self, req: web.Request) -> web.Response:
         try:
             auth = req.headers["Authorization"]
@@ -197,7 +207,7 @@ class ClientProxy:
         if user_id != f"@{az.owner}{self.mxid_suffix}":
             raise Error.mismatching_user
 
-        async with self.dm_locks[user_id]:
+        async with self.get_dms_lock(user_id):
             url = (
                 self.hs_address
                 / "client/v3/user"
