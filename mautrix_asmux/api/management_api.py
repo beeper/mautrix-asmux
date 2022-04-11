@@ -91,6 +91,7 @@ class ManagementAPI:
 
         self.http = http
         self.server = server
+        self.redis_cache_handler = redis_cache_handler
 
         self.app = web.Application(middlewares=[self.check_auth])
         self.app.router.add_get("/user/{id}", self.get_user)
