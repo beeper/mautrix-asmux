@@ -68,6 +68,7 @@ class MuxServer:
             hs_address=URL(config["homeserver.address"]),
             as_token=config["appservice.as_token"],
             http=self.http,
+            redis=self.redis,
             login_shared_secret=config["homeserver.login_shared_secret"],
         )
         self.management_api = ManagementAPI(

@@ -69,7 +69,7 @@ class RedisCacheHandler:
 
     async def invalidate_az(self, az: AppService) -> None:
         self.log.debug(f"Sending invalidate cached AZ: {az}")
-        await self.redis.publish(AS_CACHE_CHANNEL, cast(str, az.id))
+        await self.redis.publish(APPSERVICE_CACHE_CHANNEL, cast(str, az.id))
 
     async def invalidate_room(self, room: Room) -> None:
         self.log.debug(f"Sending invalidate cached AZ: {room}")
