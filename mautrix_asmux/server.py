@@ -17,7 +17,7 @@ from .api import (
     ManagementAPI,
 )
 from .config import Config
-from .redis import RedisCacheHandler
+from .redis import RedisCacheHandler, RedisPubSub
 
 
 class MuxServer:
@@ -45,12 +45,18 @@ class MuxServer:
         self.http = http
 
         self.redis = Redis.from_url(config["mux.redis"])
-        self.redis_cache_handler = RedisCacheHandler(self.redis)
+        self.redis_pubsub = RedisPubSub(self.redis)
+        self.redis_cache_handler = RedisCacheHandler(
+            redis=self.redis,
+            redis_pubsub=self.redis_pubsub,
+        )
 
         self.as_pinger = AppServicePinger(
             server=self,
             mxid_prefix=mxid_prefix,
             mxid_suffix=mxid_suffix,
+            redis=self.redis,
+            redis_pubsub=self.redis_pubsub,
         )
 
         checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
@@ -101,7 +107,9 @@ class MuxServer:
 
     async def start(self) -> None:
         await self.redis.ping()
+        await self.redis_pubsub.setup()
         await self.redis_cache_handler.setup()
+        await self.as_pinger.setup()
         self.log.debug("Starting web server")
         await self.runner.setup()
         site = web.TCPSite(self.runner, self.host, self.port)

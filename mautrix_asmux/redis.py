@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Awaitable, Callable
 from uuid import UUID
 import asyncio
 import logging
@@ -14,37 +15,34 @@ ROOM_CACHE_CHANNEL = "room-cache-invalidation"
 USER_CACHE_CHANNEL = "user-cache-invalidation"
 
 
-class RedisCacheHandler:
-    log: logging.Logger = logging.getLogger("mau.redis")
+class RedisPubSub:
+    log: logging.Logger = logging.getLogger("mau.redis.PubSub")
+    channel_handlers: dict[str, Callable[[str], Awaitable]]
+    failure_handlers: list[Callable]
 
     def __init__(self, redis: Redis) -> None:
         self.redis = redis
-
-    async def setup(self):
-        self.log.info("Setting up Redis cache invalidation subscriptions")
-
         self.pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
+        self.channel_handlers = {}
+        self.failure_handlers = []
 
+    def add_failure_handler(self, failure_handler_func: Callable) -> None:
+        self.failure_handlers.append(failure_handler_func)
+
+    async def setup(self) -> None:
+        asyncio.create_task(self.read_pubsub_messages())
+
+    async def subscribe(self, **channel_handlers: Callable[[str], Awaitable]) -> None:
         # NOTE: aioredis 2.0.1 doesn't support async callback functons and
         # we cannot currently switch to redis-py (where aioredis has been
         # merged) due to conflicts with aiohttp.
         # See: https://linear.app/beeper/issue/BRI-2811
-        await self.pubsub.subscribe(
-            APPSERVICE_CACHE_CHANNEL,
-            ROOM_CACHE_CHANNEL,
-            USER_CACHE_CHANNEL,
-        )
-        self.channel_handlers = {
-            APPSERVICE_CACHE_CHANNEL: self.handle_invalidate_az,
-            ROOM_CACHE_CHANNEL: self.handle_invalidate_room,
-            USER_CACHE_CHANNEL: self.handle_invalidate_user,
-        }
+        self.channel_handlers.update(channel_handlers)
+        channel_keys = list(channel_handlers.keys())
+        await self.pubsub.subscribe(*channel_keys)
+        self.log.debug(f"Subscribing to channels: {channel_keys}")
 
-        asyncio.create_task(self.read_pubsub_messages())
-
-    # Listen for and handle invalidation messages
-
-    async def read_pubsub_messages(self):
+    async def read_pubsub_messages(self) -> None:
         message: dict[str, bytes]
 
         while True:
@@ -57,11 +55,38 @@ class RedisCacheHandler:
                     else:
                         self.log.warning(f"Unexpected redis pubsub message: {message}")
             except Exception as e:
-                self.log.critical(f"Redis failure, throwing caches: {e}")
-                AppService.empty_cache()
-                Room.empty_cache()
-                User.empty_cache()
+                self.log.critical(f"Redis pubsub failure: {e}")
+                for failure_handler in self.failure_handlers:
+                    failure_handler()
             await asyncio.sleep(1)
+
+
+class RedisCacheHandler:
+    log: logging.Logger = logging.getLogger("mau.redis.CacheHandler")
+
+    def __init__(self, redis: Redis, redis_pubsub: RedisPubSub) -> None:
+        self.redis = redis
+        self.redis_pubsub = redis_pubsub
+
+    async def setup(self):
+        self.log.info("Setting up Redis cache invalidation subscriptions")
+
+        def on_fail():
+            AppService.empty_cache()
+            Room.empty_cache()
+            User.empty_cache()
+
+        self.redis_pubsub.add_failure_handler(on_fail)
+
+        await self.redis_pubsub.subscribe(
+            **{
+                APPSERVICE_CACHE_CHANNEL: self.handle_invalidate_az,
+                ROOM_CACHE_CHANNEL: self.handle_invalidate_room,
+                USER_CACHE_CHANNEL: self.handle_invalidate_user,
+            },
+        )
+
+    # Handle invalidation messages
 
     async def handle_invalidate_az(self, message: str):
         az = await AppService.get(UUID(message))
