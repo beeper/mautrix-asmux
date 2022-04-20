@@ -33,11 +33,11 @@ from .as_proxy import (
     FAILED_EVENTS,
     SUCCESSFUL_EVENTS,
     Events,
-    make_ping_error,
     migrate_state_data,
     send_message_checkpoints,
 )
 from .as_queue import AppServiceQueue, QueueWaiterOverridden
+from .as_util import make_ping_error
 from .cs_proxy import ClientProxy
 from .errors import Error, WebsocketNotConnected
 from .websocket_util import WebsocketHandler
@@ -227,6 +227,9 @@ class AppServiceWebsocketHandler:
                 f"Failed to request sync proxy stop for {az.id}: {type(e).__name__}: {e}"
             )
             self.log.trace("Sync proxy stop error", exc_info=True)
+
+    def has_az_websocket(self, az: AppService) -> bool:
+        return az.id in self.websockets
 
     async def handle_ws(self, req: web.Request) -> web.WebSocketResponse:
         if self._stopping:

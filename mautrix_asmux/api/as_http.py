@@ -19,7 +19,8 @@ from mautrix.util.message_send_checkpoint import (
 )
 
 from ..database import AppService
-from .as_proxy import Events, make_ping_error, migrate_state_data, send_message_checkpoints
+from .as_proxy import Events, migrate_state_data, send_message_checkpoints
+from .as_util import make_ping_error
 
 
 class AppServiceHTTPHandler:

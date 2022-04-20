@@ -10,6 +10,7 @@ import aiohttp
 
 from .api import (
     AppServiceHTTPHandler,
+    AppServicePinger,
     AppServiceProxy,
     AppServiceWebsocketHandler,
     ClientProxy,
@@ -45,6 +46,12 @@ class MuxServer:
 
         self.redis = Redis.from_url(config["mux.redis"])
         self.redis_cache_handler = RedisCacheHandler(self.redis)
+
+        self.as_pinger = AppServicePinger(
+            server=self,
+            mxid_prefix=mxid_prefix,
+            mxid_suffix=mxid_suffix,
+        )
 
         checkpoint_url = config["mux.message_send_checkpoint_endpoint"]
         self.as_proxy = AppServiceProxy(

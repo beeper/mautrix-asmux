@@ -15,7 +15,7 @@ import attr
 from mautrix.api import HTTPAPI
 from mautrix.appservice import AppServiceServerMixin
 from mautrix.types import JSON, DeviceLists, DeviceOTKCount, UserID
-from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
+from mautrix.util.bridge_state import BridgeState, BridgeStateEvent
 from mautrix.util.logging import TraceLogger
 from mautrix.util.message_send_checkpoint import (
     MessageSendCheckpoint,
@@ -52,15 +52,6 @@ BridgeState.human_readable_errors.update(
 )
 
 redactable_types = ("m.room.message", "m.room.encrypted", "m.sticker", "m.reaction")
-
-
-def make_ping_error(
-    error: str,
-    message: Optional[str] = None,
-    state_event: BridgeStateEvent = BridgeStateEvent.BRIDGE_UNREACHABLE,
-) -> GlobalBridgeState:
-    bridge_state = BridgeState(state_event=state_event, error=error, message=message)
-    return GlobalBridgeState(remote_states=None, bridge_state=bridge_state)
 
 
 def migrate_state_data(raw_pong: dict[str, Any], is_global: bool = True) -> JSON:
@@ -273,29 +264,6 @@ class AppServiceProxy(AppServiceServerMixin):
             for type in events.types:
                 metric.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
             return status
-
-    async def ping(self, az: AppService) -> GlobalBridgeState:
-        try:
-            if not az.push:
-                pong = await self.server.as_websocket.ping(az)
-            elif az.address:
-                pong = await self.server.as_http.ping(az)
-            else:
-                self.log.warning(f"Not pinging {az.name}: no address configured")
-                pong = make_ping_error("ping-no-remote")
-        except Exception as e:
-            self.log.exception(f"Fatal error pinging {az.name}")
-            pong = make_ping_error("ping-fatal-error", message=str(e))
-        user_id = UserID(f"@{az.owner}{self.mxid_suffix}")
-        pong.bridge_state.fill()
-        pong.bridge_state.user_id = user_id
-        pong.bridge_state.remote_id = None
-        pong.bridge_state.remote_name = None
-        for remote in (pong.remote_states or {}).values():
-            remote.source = remote.source or "bridge"
-            remote.timestamp = remote.timestamp or int(time.time())
-            remote.user_id = user_id
-        return pong
 
     async def _get_az_from_user_id(self, user_id: UserID) -> Optional[AppService]:
         if (
