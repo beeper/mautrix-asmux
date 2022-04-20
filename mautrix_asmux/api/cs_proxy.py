@@ -498,5 +498,6 @@ class ClientProxy:
 
         headers = copy_headers_no_host(req.headers)
         headers["Authorization"] = f"Bearer {self.as_token}"
+        headers["X-Beeper-Bridge"] = az.name
 
         return headers, query
