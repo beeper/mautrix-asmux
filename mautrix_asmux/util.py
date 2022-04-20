@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, Optional
 
+from multidict import CIMultiDict
+
 from mautrix.types import JSON
 from mautrix.util.message_send_checkpoint import CHECKPOINT_TYPES
 
@@ -44,7 +46,7 @@ def should_forward_pdu(az: Optional["AppService"], event: JSON, mxid_suffix: str
     )
 
 
-def copy_headers_no_host(headers: dict[str, str]) -> dict[str, str]:
+def copy_headers_no_host(headers: CIMultiDict[str]) -> CIMultiDict[str]:
     headers_no_host = headers.copy()
     try:
         del headers_no_host["Host"]
