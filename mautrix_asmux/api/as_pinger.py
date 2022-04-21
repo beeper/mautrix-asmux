@@ -65,8 +65,7 @@ class AppServicePinger:
         az = await AppService.get(UUID(message))
         if az and self.server.as_websocket.has_az_websocket(az):
             self.log.debug(f"Handling ping request for AZ: {az.id}")
-            # pong = await self.server.as_websocket.ping(az)
-            pong = make_ping_error("io-timeout")
+            pong = await self.server.as_websocket.ping(az)
             ping_request_queue = get_ping_request_queue(az)
 
             async with self.redis.pipeline(transaction=True) as pipe:
