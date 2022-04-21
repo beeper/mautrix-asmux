@@ -64,7 +64,7 @@ class AppServicePinger:
 
         az = await AppService.get(UUID(message))
         if az and self.server.as_websocket.has_az_websocket(az):
-            self.log.debug(f"Handling ping request for AZ: {az.id}")
+            self.log.debug(f"Handling ping request for AZ: {az.name}")
             pong = await self.server.as_websocket.ping(az)
             ping_request_queue = get_ping_request_queue(az)
 
@@ -81,6 +81,8 @@ class AppServicePinger:
         to receive the response before giving up. The `handle_bridge_ping_request`
         method executes the actual ping requests this function sends.
         """
+
+        self.log.debug(f"Requesting ping for AZ: {az.name}")
 
         ping_request_queue = get_ping_request_queue(az)
         attempts = 0
