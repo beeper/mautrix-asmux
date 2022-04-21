@@ -82,24 +82,26 @@ class AppServicePinger:
         method executes the actual ping requests this function sends.
         """
 
-        self.log.debug(f"Requesting ping for AZ: {az.name}")
-
         ping_request_queue = get_ping_request_queue(az)
-        attempts = 0
+        attempts = 1
         max_attempts = 5
 
         while True:
+            self.log.debug(
+                f"Requesting ping for AZ: {az.name} (attempt={attempts}/{max_attempts})",
+            )
             await self.redis.publish(PING_REQUEST_CHANNEL, str(az.id))
-            _, response = await self.redis.blpop(ping_request_queue, timeout=10)
-            if response:
+            response = await self.redis.blpop(ping_request_queue, timeout=10)
+            if response is not None:
+                response = response[1]
                 break
 
-            attempts += 1
-            if attempts > max_attempts:
+            if attempts >= max_attempts:
                 self.log.warning(
                     f"Gave up waiting for ping response over Redis for {az.name} ({az.id})",
                 )
                 return make_ping_error("websocket-unknown-error")
+            attempts += 1
 
         data = json.loads(response)
         # Workaround for: https://github.com/mautrix/python/pull/98
