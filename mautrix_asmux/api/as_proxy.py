@@ -8,6 +8,8 @@ import logging
 import time
 
 from aiohttp import web
+from aioredis import Redis
+from aioredis.lock import Lock
 from attr import dataclass
 import aiohttp
 import attr
@@ -179,6 +181,7 @@ class AppServiceProxy(AppServiceServerMixin):
         hs_token: str,
         checkpoint_url: str,
         http: aiohttp.ClientSession,
+        redis: Redis,
     ) -> None:
         super().__init__(ephemeral_events=True)
         self.server = server
@@ -186,11 +189,18 @@ class AppServiceProxy(AppServiceServerMixin):
         self.mxid_suffix = mxid_suffix
         self.hs_token = hs_token
         self.http = http
-        self.locks = defaultdict(lambda: asyncio.Lock())
+        self.redis = redis
         self.checkpoint_url = checkpoint_url
+        self.az_locks = {}
         self.api_server_sess = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=5), headers={"User-Agent": HTTPAPI.default_ua}
         )
+
+    def get_appservice_lock(self, az):
+        if az.id not in self.az_locks:
+            lock = Lock(self.redis, f"az-lock-{az.id}")
+            self.az_locks[az.id] = lock
+        return self.az_locks[az.id]
 
     async def send_message_send_checkpoints(self, az: AppService, events: Events):
         if not self.checkpoint_url:
@@ -236,7 +246,7 @@ class AppServiceProxy(AppServiceServerMixin):
         await send_message_checkpoints(self, az, cast(JSON, {"checkpoints": checkpoints}))
 
     async def post_events(self, az: AppService, events: Events) -> str:
-        async with self.locks[az.id]:
+        async with self.get_appservice_lock(az):
             for type in events.types:
                 ACCEPTED_EVENTS.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
 
@@ -427,7 +437,7 @@ class AppServiceProxy(AppServiceServerMixin):
         outgoing_txn_id = data.pop("fi.mau.syncproxy.transaction_id", txn_id)
 
         sent_to = {}
-        async with self.locks[appservice.id]:
+        async with self.get_appservice_lock(appservice):
             try:
                 self.log.trace(
                     "Sending error transaction %s to %s: %s",

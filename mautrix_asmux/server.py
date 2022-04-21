@@ -67,6 +67,7 @@ class MuxServer:
             hs_token=config["appservice.hs_token"],
             checkpoint_url=checkpoint_url,
             http=self.http,
+            redis=self.redis,
         )
         self.as_http = AppServiceHTTPHandler(
             mxid_suffix=mxid_suffix, http=self.http, checkpoint_url=checkpoint_url
