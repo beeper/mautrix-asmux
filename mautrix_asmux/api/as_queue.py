@@ -1,136 +1,91 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import TYPE_CHECKING, AsyncIterator, List, Optional
+from typing import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 import asyncio
+import json
+import logging
 
-from mautrix.types import JSON, DeviceLists
+from aioredis import Redis
 
 from ..database import AppService
 from .as_proxy import Events
 
-if TYPE_CHECKING:
-    from .as_websocket import AppServiceWebsocketHandler
-
-
-class QueueWaiterOverridden(Exception):
-    def __init__(self) -> None:
-        super().__init__("Another task started waiting for the next transaction")
-
-
-next_consumer_id = 0
+MAX_PDU_AGE_MS = 3 * 60 * 1000
+WAKEUP_REQUEST_CHANNEL = "bridge-wakeup-requests"
 
 
 class AppServiceQueue:
-    az: AppService
-    ws: "AppServiceWebsocketHandler"
-    owner: str
-    max_pdu_age_ms: int
-    loop: asyncio.AbstractEventLoop
-    _next_txn: Optional[Events]
-    _current_txn: Optional[Events]
-    _txn_waiter: Optional[asyncio.Future]
-    _consumer_id: Optional[int]
-    _cleanup_task: Optional[asyncio.Task]
+    log: logging.Logger = logging.getLogger("mau.api.as_websocket")
 
-    def __init__(self, az: AppService, ws: "AppServiceWebsocketHandler") -> None:
+    az: AppService
+    max_pdu_age_ms: int
+
+    def __init__(
+        self,
+        redis: Redis,
+        mxid_suffix: str,
+        az: AppService,
+        report_expired_pdu: Callable,
+    ) -> None:
+        self.redis = redis
         self.az = az
-        self.ws = ws
-        self.owner = f"@{self.az.owner}{ws.mxid_suffix}"
-        self.loop = asyncio.get_running_loop()
-        self.max_pdu_age_ms = 3 * 60 * 1000
-        self.cleanup_interval = 15
-        self._next_txn = None
-        self._current_txn = None
-        self._txn_waiter = None
-        self._consumer_id = None
-        self._cleanup_task = None
+        self.queue_name = f"bridge-txns-{az.id}"
+        self.owner_mxid = f"@{az.owner}{mxid_suffix}"
+        self.report_expired_pdu = report_expired_pdu
 
     @asynccontextmanager
     async def next(self) -> AsyncIterator[Events]:
-        if self._current_txn is None:
-            if self._txn_waiter is not None and not self._txn_waiter.done():
-                self._txn_waiter.set_exception(QueueWaiterOverridden())
-            self._txn_waiter = self.loop.create_future()
-            await self._txn_waiter
+        """
+        Get and yield events from a Redis stream, removing them after successful processing.
+        We use a stream here becacuse this allows us to do a blocking get without popping
+        the message until after processing.
+        """
 
-        assert self._current_txn is not None
-        yield self._current_txn
-
-        self._current_txn = self._next_txn
-        self._next_txn = None
-
-    def push(self, txn: Events) -> None:
-        if self._current_txn is None:
-            self._current_txn = txn
-            if self._txn_waiter is not None and not self._txn_waiter.done():
-                self._txn_waiter.set_result(None)
-                self._txn_waiter = None
-        elif self._next_txn is None:
-            self._next_txn = txn
-        else:
-            self._next_txn.txn_id = f"{self._next_txn.txn_id},{txn.txn_id}"
-            self._next_txn.types += txn.types
-            self._next_txn.pdu += txn.pdu
-            self._next_txn.edu += txn.edu
-            _append_device_list(self._next_txn.device_lists, txn.device_lists)
-            self._next_txn.otk_count |= txn.otk_count
-
-        # Restart the cleanup task if it's not running and there's nothing consuming the queue.
-        if (self._cleanup_task is None or self._cleanup_task.done()) and self._consumer_id is None:
-            self._cleanup_task = asyncio.create_task(self._do_cleanup())
-
-    def start_consuming(self) -> int:
-        global next_consumer_id
-        next_consumer_id += 1
-        self._consumer_id = next_consumer_id
-        if self._cleanup_task is not None and not self._cleanup_task.done():
-            self._cleanup_task.cancel()
-            self._cleanup_task = None
-        return self._consumer_id
-
-    def stop_consuming(self, consumer_id: int) -> None:
-        if self._consumer_id == consumer_id:
-            self._consumer_id = None
-            self._cleanup_task = asyncio.create_task(self._do_cleanup())
-
-    async def _do_cleanup(self) -> None:
         while True:
-            await asyncio.sleep(self.cleanup_interval)
-            expired = self.pop_expired_pdu()
+            streams_response = await self.redis.xread({self.queue_name: 0}, count=1, block=0)
+            stream_id, raw_txn = streams_response[0][1][0]  # res -> queue(name, data) -> data[0]
+            txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
+            expired = txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
             if expired:
-                asyncio.create_task(self.ws.report_expired_pdu(self.az, expired))
-            if self.is_empty:
-                # Stop looping if there's no events, we'll restart the cleanup task in push().
-                self._cleanup_task = None
+                asyncio.create_task(self.report_expired_pdu(self.az, expired))
+            if txn.is_empty:
+                await self.redis.xdel(self.queue_name, stream_id)
+            else:
                 break
 
-    @property
-    def is_empty(self) -> bool:
-        return self._next_txn is None and self._current_txn is None
+        yield txn
 
-    @property
-    def contains_pdus(self) -> bool:
-        return bool(
-            (self._current_txn and self._current_txn.pdu)
-            or (self._next_txn and self._next_txn.pdu)
-        )
+        # Now that we have successfully processed the txn, delete it from the stream
+        await self.redis.xdel(self.queue_name, stream_id)
 
-    def pop_expired_pdu(self) -> List[JSON]:
-        expired = []
-        if self._current_txn is not None:
-            expired = self._current_txn.pop_expired_pdu(self.owner, self.max_pdu_age_ms)
-        if self._next_txn is not None:
-            expired += self._next_txn.pop_expired_pdu(self.owner, self.max_pdu_age_ms)
+    async def push(self, txn: Events) -> None:
+        """
+        Push event transaction to the queue, possibly send a wakeup to the target bridge
+        and kick off a background cleanup task in case the websocket pull the txn.
+        """
 
-        if self._current_txn is not None and self._current_txn.is_empty:
-            self._current_txn = self._next_txn
-            self._next_txn = None
-        if self._next_txn is not None and self._next_txn.is_empty:
-            self._next_txn = None
-        return expired
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.xadd(self.queue_name, {"txn": json.dumps(txn.serialize())})
+            pipe.expire(self.queue_name, 86400 * 7)  # 7 days just in case
+            await pipe.execute()
 
+        if txn.pdu:
+            await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(self.az.id))
 
-def _append_device_list(l1: DeviceLists, l2: DeviceLists) -> None:
-    l1.changed = list(set(l1.changed) | set(l2.changed))
-    l1.left = list(set(l1.left) | set(l2.left))
+    async def contains_pdus(self):
+        """
+        Loop through all pending txns for this AS and return true if any contain PDUs.
+        """
+
+        raw_txns = await self.redis.xrange(self.queue_name)
+        for _, raw_txn in raw_txns:
+            self.log.debug(f"RAW: {raw_txn}")
+            txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
+            # Note: we remove the expired PDUs here for the purpose of indicating whether
+            # the queue contains them. We don't actually write this back to Redis at all,
+            # this is handled upon retrieval in next() above.
+            txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
+            if txn.pdu:
+                return True
+        return False

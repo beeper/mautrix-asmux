@@ -9,6 +9,7 @@ import time
 
 from aiohttp import web
 from aiohttp.http import WSCloseCode
+from aioredis import Redis
 from yarl import URL
 import aiohttp
 
@@ -86,13 +87,22 @@ class AppServiceWebsocketHandler:
     api_server_sess: aiohttp.ClientSession
     sync_proxy_sess: aiohttp.ClientSession
 
-    def __init__(self, config: Config, mxid_prefix: str, mxid_suffix: str) -> None:
+    def __init__(
+        self,
+        config: Config,
+        mxid_prefix: str,
+        mxid_suffix: str,
+        redis: Redis,
+        redis_pubsub: RedisPubSub,
+    ) -> None:
         self.remote_status_endpoint = config["mux.remote_status_endpoint"]
         self.bridge_status_endpoint = config["mux.bridge_status_endpoint"]
         self.sync_proxy = URL(config["mux.sync_proxy.url"])
         self.sync_proxy_token = config["mux.sync_proxy.token"]
         self.sync_proxy_own_address = config["mux.sync_proxy.asmux_address"]
         self.hs_token = config["appservice.hs_token"]
+        self.redis = redis
+        self.redis_pubsub = redis_pubsub
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
         self.websockets = {}
@@ -329,12 +339,15 @@ class AppServiceWebsocketHandler:
         try:
             queue = self.queues[az.id]
         except KeyError:
-            queue = self.queues[az.id] = AppServiceQueue(az, self)
+            queue = self.queues[az.id] = AppServiceQueue(
+                redis=self.redis,
+                mxid_suffix=self.mxid_suffix,
+                az=az,
+                report_expired_pdu=self.report_expired_pdu,
+            )
         return queue
 
     async def report_expired_pdu(self, az: AppService, expired: List[JSON]) -> None:
-        if not expired:
-            return
         checkpoints = [
             MessageSendCheckpoint(
                 event_id=evt.get("event_id"),
@@ -353,24 +366,22 @@ class AppServiceWebsocketHandler:
     async def _consume_queue_one(
         self, az: AppService, ws: WebsocketHandler, queue: AppServiceQueue
     ) -> None:
-        expired = queue.pop_expired_pdu()
-        if expired:
-            asyncio.create_task(self.report_expired_pdu(az, expired))
-        if queue.contains_pdus and self.should_wakeup(
+        queue_contains_pdus = await queue.contains_pdus()
+        if queue_contains_pdus and self.should_wakeup(
             az,
             min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
             min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
         ):
             asyncio.create_task(self.wakeup_appservice(az))
         timeout = FIRST_SEND_TIMEOUT if ws.timeouts == 0 else RETRY_SEND_TIMEOUT
+        txn: Optional[Events] = None
         try:
-            txn: Events
             async with queue.next() as txn:
                 await self._send_next_txn(az, ws, txn, timeout)
         except asyncio.TimeoutError:
             ws.log.warning(
-                f"Failed to send {txn.txn_id} to {az.name}: "
-                f"didn't get response within {timeout} seconds"
+                f"Failed to send {txn.txn_id} to {az.name}: "  # type: ignore
+                f"didn't get response within {timeout} seconds",
             )
             ws.timeouts += 1
             if ws.timeouts >= TIMEOUT_COUNT_LIMIT:
@@ -378,18 +389,18 @@ class AppServiceWebsocketHandler:
                     ws.close(code=WS_NOT_ACKNOWLEDGED, status="transactions_not_acknowledged")
                 )
                 return
-            elif queue.contains_pdus and self.should_wakeup(az):
+            elif queue_contains_pdus and self.should_wakeup(az):
                 await self.wakeup_appservice(az)
-        except QueueWaiterOverridden:
-            self.log.exception("Got an unexpected QueueWaiterOverridden, exiting consumer")
-            raise
-        except Exception as e:
-            ws.log.warning(f"Failed to send {txn.txn_id} to {az.name}: {type(e).__name__} {e}")
+        except Exception:
+            if txn is None:
+                ws.log.exception("Failed to get next transaction")
+                raise
+            else:
+                ws.log.exception(f"Failed to send {txn.txn_id} to {az.name}")
 
     async def _consume_queue(self, az: AppService, ws: WebsocketHandler) -> None:
         queue = self._get_queue(az)
         ws.log.debug("Started consuming events from queue")
-        consumer_id = queue.start_consuming()
         try:
             while not ws.dead:
                 await self._consume_queue_one(az, ws, queue)
@@ -400,8 +411,6 @@ class AppServiceWebsocketHandler:
             raise
         else:
             self.log.warning("Websocket seems to have died without cancelling queue consumer?")
-        finally:
-            queue.stop_consuming(consumer_id)
 
     def should_wakeup(
         self,
@@ -457,10 +466,10 @@ class AppServiceWebsocketHandler:
         except Exception as e:
             self.log.warning(f"Failed to send wakeup push for {az.name}: {e}")
 
-    def queue_events(self, az: AppService, events: Events) -> None:
-        self._get_queue(az).push(events)
-        if events.pdu and self.should_wakeup(az, only_if_ws_timeout=True):
-            asyncio.create_task(self.wakeup_appservice(az))
+    async def queue_events(self, az: AppService, events: Events) -> None:
+        await self._get_queue(az).push(events)
+        if events.pdu:
+            await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(az.id))
 
     async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
         try:
