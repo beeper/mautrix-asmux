@@ -1,8 +1,9 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Awaitable, Optional
 
 from multidict import CIMultiDict
 
 from mautrix.types import JSON
+from mautrix.util.logging import TraceLogger
 from mautrix.util.message_send_checkpoint import CHECKPOINT_TYPES
 
 if TYPE_CHECKING:
@@ -53,6 +54,14 @@ def copy_headers_no_host(headers: CIMultiDict[str]) -> CIMultiDict[str]:
     except KeyError:
         pass
     return headers_no_host
+
+
+async def log_task_exceptions(logger: TraceLogger, awaitable: Awaitable):
+    try:
+        return await awaitable
+    except Exception:
+        logger.exception("Exception in task")
+        raise
 
 
 __all__ = ["is_double_puppeted", "should_forward_pdu", "copy_headers_no_host"]

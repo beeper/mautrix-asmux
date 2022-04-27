@@ -29,7 +29,7 @@ from mautrix.util.opt_prometheus import Counter
 
 from ..database import AppService, Room
 from ..segment import track_event, track_events
-from ..util import is_double_puppeted, should_forward_pdu
+from ..util import is_double_puppeted, log_task_exceptions, should_forward_pdu
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -265,7 +265,9 @@ class AppServiceProxy(AppServiceServerMixin):
             for type in events.types:
                 ACCEPTED_EVENTS.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
 
-            asyncio.create_task(self.send_message_send_checkpoints(az, events))
+            asyncio.create_task(
+                log_task_exceptions(self.log, self.send_message_send_checkpoints(az, events)),
+            )
             if not az.push:
                 self.log.trace(f"Queueing {events.txn_id} to {az.name}")
                 await self.server.as_websocket.queue_events(az, events)
@@ -390,7 +392,9 @@ class AppServiceProxy(AppServiceServerMixin):
                 f"Preparing to send {len(az_events.pdu)} PDUs and {len(az_events.edu)} EDUs "
                 f"from transaction {az_events.txn_id} to {appservice.name}"
             )
-            task = asyncio.create_task(self.post_events(appservice, az_events))
+            task = asyncio.create_task(
+                log_task_exceptions(self.log, self.post_events(appservice, az_events)),
+            )
             if str(appservice.id) in synchronous_to:
                 wait_for[appservice.id] = task
 
