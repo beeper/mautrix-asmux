@@ -101,6 +101,21 @@ class Events:
     otk_count: dict[UserID, DeviceOTKCount] = attr.ib(factory=lambda: {})
     device_lists: DeviceLists = attr.ib(factory=lambda: DeviceLists(changed=[], left=[]))
 
+    @classmethod
+    def deserialize(cls, data: dict[str, Any]) -> "Events":
+        data["pdu"] = data.pop("events", [])
+        data["edu"] = data.pop("ephemeral", [])
+        data["otk_count"] = data.pop("device_one_time_keys_count", {})
+
+        device_lists = data.get("device_lists")
+        if device_lists:
+            data["device_lists"] = DeviceLists.deserialize(device_lists)
+
+        if "txn_id" not in data:
+            data["txn_id"] = ""
+
+        return cls(**data)
+
     def serialize(self) -> dict[str, Any]:
         output = {"events": self.pdu}
         if self.edu:
