@@ -184,7 +184,7 @@ class AppServiceProxy(AppServiceServerMixin):
     hs_token: str
     mxid_prefix: str
     mxid_suffix: str
-    locks: dict[UUID, asyncio.Lock]
+    az_locks: dict[UUID, Lock]
     checkpoint_url: str
     api_server_sess: aiohttp.ClientSession
 
