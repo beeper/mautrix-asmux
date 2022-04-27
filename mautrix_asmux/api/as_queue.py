@@ -9,6 +9,7 @@ import logging
 from aioredis import Redis
 
 from ..database import AppService
+from ..util import log_task_exceptions
 from .as_proxy import Events
 
 MAX_PDU_AGE_MS = 3 * 60 * 1000
@@ -48,7 +49,9 @@ class AppServiceQueue:
             txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
             expired = txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
             if expired:
-                asyncio.create_task(self.report_expired_pdu(self.az, expired))
+                asyncio.create_task(
+                    log_task_exceptions(self.log, self.report_expired_pdu(self.az, expired)),
+                )
             if txn.is_empty:
                 await self.redis.xdel(self.queue_name, stream_id)
             else:
@@ -80,7 +83,6 @@ class AppServiceQueue:
 
         raw_txns = await self.redis.xrange(self.queue_name)
         for _, raw_txn in raw_txns:
-            self.log.debug(f"RAW: {raw_txn}")
             txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
             # Note: we remove the expired PDUs here for the purpose of indicating whether
             # the queue contains them. We don't actually write this back to Redis at all,
