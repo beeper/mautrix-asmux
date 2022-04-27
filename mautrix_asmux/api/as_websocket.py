@@ -28,6 +28,7 @@ from mautrix.util.opt_prometheus import Counter, Gauge
 
 from ..config import Config
 from ..database import AppService
+from ..redis import RedisPubSub
 from ..segment import track_events
 from ..sygnal import PushKey
 from .as_proxy import (
@@ -37,7 +38,7 @@ from .as_proxy import (
     migrate_state_data,
     send_message_checkpoints,
 )
-from .as_queue import AppServiceQueue, QueueWaiterOverridden
+from .as_queue import WAKEUP_REQUEST_CHANNEL, AppServiceQueue
 from .as_util import make_ping_error
 from .cs_proxy import ClientProxy
 from .errors import Error, WebsocketNotConnected
@@ -114,6 +115,15 @@ class AppServiceWebsocketHandler:
             timeout=aiohttp.ClientTimeout(total=20), headers={"User-Agent": HTTPAPI.default_ua}
         )
         self.sync_proxy_sess = aiohttp.ClientSession(headers={"User-Agent": HTTPAPI.default_ua})
+
+    async def setup(self):
+        self.log.info("Setting up Redis AS wakeup subscription")
+
+        await self.redis_pubsub.subscribe(
+            **{
+                WAKEUP_REQUEST_CHANNEL: self.handle_wakeup_appservice_request,
+            },
+        )
 
     async def stop(self) -> None:
         self._stopping = True
@@ -470,6 +480,13 @@ class AppServiceWebsocketHandler:
         await self._get_queue(az).push(events)
         if events.pdu:
             await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(az.id))
+
+    async def handle_wakeup_appservice_request(self, message: str) -> None:
+        az = await AppService.get(UUID(message))
+        if az and self.has_az_websocket(az):
+            self.log.debug(f"Handling wakeup request for: {az.name}")
+            if self.should_wakeup(az, only_if_ws_timeout=True):
+                asyncio.create_task(self.wakeup_appservice(az))
 
     async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
         try:
