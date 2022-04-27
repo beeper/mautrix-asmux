@@ -346,16 +346,15 @@ class AppServiceWebsocketHandler:
         self._send_metrics(az, txn, SUCCESSFUL_EVENTS)
 
     def _get_queue(self, az: AppService) -> AppServiceQueue:
-        try:
-            queue = self.queues[az.id]
-        except KeyError:
-            queue = self.queues[az.id] = AppServiceQueue(
+        return self.queues.setdefault(
+            az.id,
+            AppServiceQueue(
                 redis=self.redis,
                 mxid_suffix=self.mxid_suffix,
                 az=az,
                 report_expired_pdu=self.report_expired_pdu,
-            )
-        return queue
+            ),
+        )
 
     async def report_expired_pdu(self, az: AppService, expired: List[JSON]) -> None:
         checkpoints = [
