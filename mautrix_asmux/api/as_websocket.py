@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 from uuid import UUID
 import asyncio
 import json
@@ -43,6 +43,9 @@ from .as_util import make_ping_error
 from .cs_proxy import ClientProxy
 from .errors import Error, WebsocketNotConnected
 from .websocket_util import WebsocketHandler
+
+if TYPE_CHECKING:
+    from ..server import MuxServer
 
 # Response timeout when sending an event via websocket for the first time.
 FIRST_SEND_TIMEOUT = 5
@@ -90,12 +93,14 @@ class AppServiceWebsocketHandler:
 
     def __init__(
         self,
+        server: "MuxServer",
         config: Config,
         mxid_prefix: str,
         mxid_suffix: str,
         redis: Redis,
         redis_pubsub: RedisPubSub,
     ) -> None:
+        self.server = server
         self.remote_status_endpoint = config["mux.remote_status_endpoint"]
         self.bridge_status_endpoint = config["mux.bridge_status_endpoint"]
         self.sync_proxy = URL(config["mux.sync_proxy.url"])
@@ -168,7 +173,8 @@ class AppServiceWebsocketHandler:
             # Only continue on to report unreachable if the websocket is still disconnected. If
             # it's been re-established in the time it took us to handle this async action, do
             # nothing.
-            if az.id not in self.websockets:
+            ping = await self.server.as_pinger.ping(az)
+            if ping.bridge_state == BridgeStateEvent.BRIDGE_UNREACHABLE:
                 await self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE)
 
         asyncio.create_task(check_and_send_bridge_unreachable_status())

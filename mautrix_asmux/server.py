@@ -73,6 +73,7 @@ class MuxServer:
             mxid_suffix=mxid_suffix, http=self.http, checkpoint_url=checkpoint_url
         )
         self.as_websocket = AppServiceWebsocketHandler(
+            server=self,
             config=config,
             mxid_prefix=mxid_prefix,
             mxid_suffix=mxid_suffix,
