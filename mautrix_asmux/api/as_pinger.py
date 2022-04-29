@@ -85,13 +85,14 @@ class AppServicePinger:
         ping_request_queue = get_ping_request_queue(az)
         attempts = 1
         max_attempts = 5
+        timeout_per_req = 30 / max_attempts  # 30s
 
         while True:
             self.log.debug(
                 f"Requesting ping for AZ: {az.name} (attempt={attempts}/{max_attempts})",
             )
             await self.redis.publish(PING_REQUEST_CHANNEL, str(az.id))
-            response = await self.redis.blpop(ping_request_queue, timeout=10)
+            response = await self.redis.blpop(ping_request_queue, timeout=timeout_per_req)
             if response is not None:
                 response = response[1]
                 break
