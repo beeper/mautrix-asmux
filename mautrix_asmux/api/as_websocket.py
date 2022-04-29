@@ -167,14 +167,13 @@ class AppServiceWebsocketHandler:
             return
 
         async def check_and_send_bridge_unreachable_status() -> None:
-            # Wait a bit before reporting unreachable, we might reconnect right away
-            await asyncio.sleep(30)
-
+            # NOTE: this function will retry pinging with a 30s timeout, so we don't need to
+            # sleep here anymore.
             # Only continue on to report unreachable if the websocket is still disconnected. If
             # it's been re-established in the time it took us to handle this async action, do
             # nothing.
             ping = await self.server.as_pinger.ping(az)
-            if ping.bridge_state == BridgeStateEvent.BRIDGE_UNREACHABLE:
+            if ping.bridge_state.state_event == BridgeStateEvent.BRIDGE_UNREACHABLE:
                 await self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE)
 
         asyncio.create_task(check_and_send_bridge_unreachable_status())
