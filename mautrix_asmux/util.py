@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Awaitable, Optional
+from typing import TYPE_CHECKING, Awaitable, Optional, Union
+from logging import Logger
 
 from multidict import CIMultiDict
 
@@ -56,7 +57,7 @@ def copy_headers_no_host(headers: CIMultiDict[str]) -> CIMultiDict[str]:
     return headers_no_host
 
 
-async def log_task_exceptions(logger: TraceLogger, awaitable: Awaitable):
+async def log_task_exceptions(logger: Union[TraceLogger, Logger], awaitable: Awaitable):
     try:
         return await awaitable
     except Exception:

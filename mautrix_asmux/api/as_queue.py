@@ -17,7 +17,11 @@ WAKEUP_REQUEST_CHANNEL = "bridge-wakeup-requests"
 
 
 class AppServiceQueue:
-    log: logging.Logger = logging.getLogger("mau.api.as_websocket")
+    """
+    A Redis based queue used to buffer AS transactions to be sent via websockets.
+    """
+
+    log: logging.Logger = logging.getLogger("mau.api.as_queue")
 
     az: AppService
     max_pdu_age_ms: int
