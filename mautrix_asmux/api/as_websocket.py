@@ -246,6 +246,7 @@ class AppServiceWebsocketHandler:
             version=proto_version,
             log=self.log.getChild(az.name).getChild(identifier),
             identifier=identifier,
+            heartbeat=60 if az.prefix == "imessagecloud" else None,
         )
         ws.set_handler("bridge_status", lambda _, data: self.send_remote_status(az, data))  # type: ignore
         ws.set_handler(

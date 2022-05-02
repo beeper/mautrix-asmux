@@ -38,9 +38,10 @@ class WebsocketHandler:
         proto: str,
         version: int,
         identifier: str | None = None,
+        heartbeat: float | None = None,
     ) -> None:
         self.type_name = type_name
-        self._ws = web.WebSocketResponse(protocols=(proto,))
+        self._ws = web.WebSocketResponse(protocols=(proto,), heartbeat=heartbeat)
         self.log = log
         self.proto = version
         self.timeouts = 0
