@@ -48,7 +48,9 @@ class AppServiceQueue:
         """
 
         while True:
-            streams_response = await self.redis.xread({self.queue_name: 0}, count=1, block=0)
+            streams_response = await self.redis.xread({self.queue_name: 0}, count=1, block=30000)
+            if not streams_response:
+                continue
             stream_id, raw_txn = streams_response[0][1][0]  # res -> queue(name, data) -> data[0]
             txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
             expired = txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
