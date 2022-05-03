@@ -122,7 +122,10 @@ class Events:
         return cls(**data)
 
     def serialize(self) -> dict[str, Any]:
-        output = {"events": self.pdu}
+        output = {
+            "txn_id": self.txn_id,
+            "events": self.pdu,
+        }
         if self.edu:
             output["ephemeral"] = self.edu
         if self.otk_count:
