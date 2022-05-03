@@ -105,7 +105,12 @@ class Events:
     def deserialize(cls, data: dict[str, Any]) -> "Events":
         data["pdu"] = data.pop("events", [])
         data["edu"] = data.pop("ephemeral", [])
-        data["otk_count"] = data.pop("device_one_time_keys_count", {})
+
+        otk_count = data.pop("device_one_time_keys_count", {})
+        if otk_count:
+            data["otk_count"] = {
+                uid: DeviceOTKCount.deserialize(count) for uid, count in otk_count.items()
+            }
 
         device_lists = data.get("device_lists")
         if device_lists:
