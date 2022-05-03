@@ -140,6 +140,7 @@ class WebsocketHandler:
             message = f"Closing websocket ({code} / {status})"
             self.log.debug(message)
             self.cancel_queue_task(message)
+            await asyncio.sleep(0)  # allow the cancel to happen
             res_message = (
                 json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
                 if status
