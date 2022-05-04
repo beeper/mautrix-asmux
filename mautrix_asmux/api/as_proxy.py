@@ -363,25 +363,11 @@ class AppServiceProxy(AppServiceServerMixin):
 
         sent_to = {}
         async with self.get_appservice_lock(appservice):
-            try:
-                self.log.trace(
-                    "Sending error transaction %s to %s: %s",
-                    outgoing_txn_id,
-                    appservice.name,
-                    data,
-                )
-                if appservice.push:
-                    raise Error.syncproxy_error_not_supported
-                sent_to[str(appservice_id)] = await self.server.as_websocket.post_syncproxy_error(
-                    appservice, outgoing_txn_id, data
-                )
-            except web.HTTPException:
-                raise
-            except Exception:
-                self.log.exception(
-                    "Fatal error sending syncproxy error transaction "
-                    f"{outgoing_txn_id} to {appservice.name}"
-                )
+            sent_to[str(appservice_id)] = await self.server.as_requester.send_syncproxy_error(
+                appservice,
+                outgoing_txn_id,
+                data,
+            )
         self.transactions.add(txn_id)
         return web.json_response(
             {

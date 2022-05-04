@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 PING_REQUEST_CHANNEL = "bridge-ping-requests"
 WAKEUP_REQUEST_CHANNEL = "bridge-wakeup-requests"
 COMMAND_REQUEST_CHANNEL = "bridge-command-requests"
+SYNCPROXY_ERROR_REQUEST_CHANNEL = "bridge-syncproxy-error-requests"
 
 
 def get_ping_request_queue(az: AppService) -> str:
@@ -35,6 +36,10 @@ def get_ping_request_queue(az: AppService) -> str:
 
 def get_command_request_queue(az: AppService, request_id: str) -> str:
     return f"bridge-command-request-{az.id}-{request_id}"
+
+
+def get_syncproxy_error_request_queue(az: AppService, txn_id: str) -> str:
+    return f"bridge-syncproxy-error-request-{az.id}-{txn_id}"
 
 
 class RequestTimedOut(Exception):
@@ -64,6 +69,7 @@ class AppServiceRequester:
         self.redis_pubsub = redis_pubsub
 
         self.in_flight_command_requests: set[str] = set()
+        self.in_flight_syncproxy_error_requests: set[str] = set()
 
     async def setup(self):
         self.log.info("Setting up Redis ping subscriptions")
@@ -73,6 +79,7 @@ class AppServiceRequester:
                 PING_REQUEST_CHANNEL: self.handle_bridge_ping_request,
                 WAKEUP_REQUEST_CHANNEL: self.handle_wakeup_appservice_request,
                 COMMAND_REQUEST_CHANNEL: self.handle_bridge_command_request,
+                SYNCPROXY_ERROR_REQUEST_CHANNEL: self.handle_syncproxy_error_request,
             },
         )
 
@@ -230,6 +237,53 @@ class AppServiceRequester:
     async def wakeup_if_timeout(self, az: AppService) -> None:
         if not az.push:
             await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(az.id))
+
+    # Syncproxy errors (websocket only)
+
+    async def handle_syncproxy_error_request(self, message: str) -> None:
+        request = json.loads(message)
+        txn_id: str = request["txn_id"]
+
+        if txn_id in self.in_flight_syncproxy_error_requests:
+            self.log.debug(f"Already handling syncproxy error request: {txn_id}")
+            return
+
+        az = await AppService.get(UUID(request["az_id"]))
+        data: dict[str, Any] = request["data"]
+
+        if az and self.server.as_websocket.has_az_websocket(az):
+            self.in_flight_syncproxy_error_requests.add(txn_id)
+            self.log.trace("Sending error transaction %s to %s: %s", txn_id, az.name, data)
+            response = await self.server.as_websocket.post_syncproxy_error(az, txn_id, data)
+            syncproxy_error_request_queue = get_syncproxy_error_request_queue(az, txn_id)
+            await self._push_request_response(
+                syncproxy_error_request_queue,
+                response,
+            )
+            self.in_flight_syncproxy_error_requests.remove(txn_id)
+
+    async def send_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
+        if az.push:
+            raise Error.syncproxy_error_not_supported
+
+        syncproxy_error_request_queue = get_syncproxy_error_request_queue(az, txn_id)
+
+        try:
+            response = await self._handle_request_over_redis(
+                log_msg=f"post syncproxy error (appService={az.name}, txnId={txn_id})",
+                request_channel=SYNCPROXY_ERROR_REQUEST_CHANNEL,
+                request_queue=syncproxy_error_request_queue,
+                request_data={
+                    "az_id": str(az.id),
+                    "txn_id": txn_id,
+                    "data": data,
+                },
+                timeout_s=30,
+            )
+        except RequestTimedOut:
+            return "websocket-send-fail"
+
+        return json.loads(response)
 
     # Commands (websocket only)
 
