@@ -29,17 +29,10 @@ from mautrix.util.opt_prometheus import Counter, Gauge
 from ..config import Config
 from ..database import AppService
 from ..redis import RedisPubSub
-from ..segment import track_events
 from ..sygnal import PushKey
-from .as_proxy import (
-    FAILED_EVENTS,
-    SUCCESSFUL_EVENTS,
-    Events,
-    migrate_state_data,
-    send_message_checkpoints,
-)
+from .as_proxy import migrate_state_data, send_message_checkpoints
 from .as_queue import WAKEUP_REQUEST_CHANNEL, AppServiceQueue
-from .as_util import make_ping_error
+from .as_util import Events, make_ping_error, send_failed_metrics, send_successful_metrics
 from .cs_proxy import ClientProxy
 from .errors import Error, WebsocketNotConnected
 from .websocket_util import WebsocketHandler
@@ -340,15 +333,14 @@ class AppServiceWebsocketHandler:
                     f" -- legacy protocol, dropping transaction"
                 )
                 ws.timeouts += 1
-                self._send_metrics(az, txn, FAILED_EVENTS)
+                send_failed_metrics(az, txn)
                 return
         else:
             # Legacy protocol where client doesn't send acknowledgements
             await ws.send(raise_errors=True, command="transaction", **data)
         ws.timeouts = 0
         self.log.debug(f"Successfully sent {txn.txn_id} to {az.name}")
-        track_events(az, txn)
-        self._send_metrics(az, txn, SUCCESSFUL_EVENTS)
+        send_successful_metrics(az, txn)
 
     def _get_queue(self, az: AppService) -> AppServiceQueue:
         return self.queues.setdefault(

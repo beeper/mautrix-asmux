@@ -1,16 +1,14 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import TYPE_CHECKING, Any, Awaitable, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Optional, Tuple, Union, cast
 from collections import defaultdict
 from uuid import UUID
 import asyncio
 import logging
-import time
 
 from aiohttp import web
 from aioredis import Redis
 from aioredis.lock import Lock
-from attr import dataclass
 import aiohttp
 import attr
 
@@ -28,8 +26,9 @@ from mautrix.util.message_send_checkpoint import (
 from mautrix.util.opt_prometheus import Counter
 
 from ..database import AppService, Room
-from ..segment import track_event, track_events
-from ..util import is_double_puppeted, log_task_exceptions, should_forward_pdu
+from ..segment import track_event
+from ..util import log_task_exceptions, should_forward_pdu
+from .as_util import Events
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -92,76 +91,6 @@ async def send_message_checkpoints(
         self.log.warning(f"Failed to send message send checkpoints for {az.name}: {e}")
 
 
-@dataclass
-class Events:
-    txn_id: str
-    pdu: list[JSON] = attr.ib(factory=lambda: [])
-    edu: list[JSON] = attr.ib(factory=lambda: [])
-    types: list[str] = attr.ib(factory=lambda: [])
-    otk_count: dict[UserID, DeviceOTKCount] = attr.ib(factory=lambda: {})
-    device_lists: DeviceLists = attr.ib(factory=lambda: DeviceLists(changed=[], left=[]))
-
-    @classmethod
-    def deserialize(cls, data: dict[str, Any]) -> "Events":
-        data["pdu"] = data.pop("events", [])
-        data["edu"] = data.pop("ephemeral", [])
-
-        otk_count = data.pop("device_one_time_keys_count", {})
-        if otk_count:
-            data["otk_count"] = {
-                uid: DeviceOTKCount.deserialize(count) for uid, count in otk_count.items()
-            }
-
-        device_lists = data.get("device_lists")
-        if device_lists:
-            data["device_lists"] = DeviceLists.deserialize(device_lists)
-
-        if "txn_id" not in data:
-            data["txn_id"] = ""
-
-        return cls(**data)
-
-    def serialize(self) -> dict[str, Any]:
-        output = {
-            "txn_id": self.txn_id,
-            "events": self.pdu,
-        }
-        if self.edu:
-            output["ephemeral"] = self.edu
-        if self.otk_count:
-            output["device_one_time_keys_count"] = {  # type: ignore
-                user_id: otk.serialize() for user_id, otk in self.otk_count.items()
-            }
-        if self.device_lists.changed or self.device_lists.left:
-            output["device_lists"] = self.device_lists.serialize()
-        return output
-
-    @property
-    def is_empty(self) -> bool:
-        return (
-            not self.pdu
-            and not self.edu
-            and not self.otk_count
-            and not self.device_lists.changed
-            and not self.device_lists.left
-        )
-
-    def pop_expired_pdu(self, owner: str, max_age: int) -> List[JSON]:
-        now = int(time.time() * 1000)
-        filtered = []
-        new_pdu = []
-        for evt in self.pdu:
-            if evt.get("sender") != owner or is_double_puppeted(evt):
-                continue
-            ts = evt.get("origin_server_ts", {})
-            if ts + max_age < now:
-                filtered.append(evt)
-            else:
-                new_pdu.append(evt)
-        self.pdu = new_pdu
-        return filtered
-
-
 RECEIVED_EVENTS = Counter(
     "asmux_received_events", "Number of incoming events", labelnames=["type"]
 )
@@ -171,16 +100,6 @@ DROPPED_EVENTS = Counter(
 ACCEPTED_EVENTS = Counter(
     "asmux_accepted_events",
     "Number of events that have a target appservice",
-    labelnames=["owner", "bridge", "type"],
-)
-SUCCESSFUL_EVENTS = Counter(
-    "asmux_successful_events",
-    "Number of PDUs that were successfully sent to the target appservice",
-    labelnames=["owner", "bridge", "type"],
-)
-FAILED_EVENTS = Counter(
-    "asmux_failed_events",
-    "Number of PDUs that were successfully sent to the target appservice",
     labelnames=["owner", "bridge", "type"],
 )
 
@@ -276,29 +195,8 @@ class AppServiceProxy(AppServiceServerMixin):
             asyncio.create_task(
                 log_task_exceptions(self.log, self.send_message_send_checkpoints(az, events)),
             )
-            if not az.push:
-                self.log.trace(f"Queueing {events.txn_id} to {az.name}")
-                await self.server.as_websocket.queue_events(az, events)
-                return "ok"
-            elif not az.address:
-                self.log.warning(
-                    f"Not sending transaction {events.txn_id} to {az.name}: "
-                    f"no address configured"
-                )
-                return "no-address"
-            try:
-                self.log.trace("Sending transaction to %s: %s", az.name, events)
-                status = await self.server.as_http.post_events(az, events)
-            except Exception:
-                self.log.exception(f"Fatal error sending transaction {events.txn_id} to {az.name}")
-                status = "fatal-error"
-            if status == "ok":
-                self.log.debug(f"Successfully sent {events.txn_id} to {az.name}")
-                track_events(az, events)
-            metric = SUCCESSFUL_EVENTS if status == "ok" else FAILED_EVENTS
-            for type in events.types:
-                metric.labels(owner=az.owner, bridge=az.prefix, type=type).inc()
-            return status
+
+            return await self.server.as_requester.send_transaction(az, events)
 
     async def _get_az_from_user_id(self, user_id: UserID) -> Optional[AppService]:
         if (

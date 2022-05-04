@@ -2,7 +2,7 @@
 # Copyright (C) 2022 Beeper, Inc. All rights reserved.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 import json
 import logging
@@ -30,6 +30,11 @@ def get_ping_request_queue(az: AppService) -> str:
 
 
 class AppServiceRequester:
+    """
+    The AS requester abstracts away the differences between http and websocket based
+    appservices.
+    """
+
     log: TraceLogger = cast(TraceLogger, logging.getLogger("mau.api.as_requester"))
 
     mxid_prefix: str
@@ -57,6 +62,43 @@ class AppServiceRequester:
                 PING_REQUEST_CHANNEL: self.handle_bridge_ping_request,
             },
         )
+
+    # Transactions (http & websocket)
+
+    async def send_transaction(self, az: AppService, events: Events) -> str:
+        """
+        Send a transaction of events to a target appservice, either via HTTP push
+        or queued for a websocket to pull.
+        """
+
+        # NOTE: metrics for websocket events are only sent once the txn is
+        # delivered in the AppServiceWebsocketHandler.
+        if not az.push:
+            self.log.trace(f"Queueing {events.txn_id} to {az.name}")
+            await self.server.as_websocket.queue_events(az, events)
+            return "ok"
+
+        if not az.address:
+            self.log.warning(
+                f"Not sending transaction {events.txn_id} to {az.name}: no address configured",
+            )
+            return "no-address"
+
+        try:
+            self.log.trace("Sending transaction to %s: %s", az.name, events)
+            status = await self.server.as_http.post_events(az, events)
+        except Exception:
+            self.log.exception(f"Fatal error sending transaction {events.txn_id} to {az.name}")
+            status = "fatal-error"
+
+        if status == "ok":
+            self.log.debug(f"Successfully sent {events.txn_id} to {az.name}")
+            send_successful_metrics(az, events)
+        else:
+            send_failed_metrics(az, events)
+        return status
+
+    # Pings (http & websocket)
 
     async def handle_bridge_ping_request(self, message: str) -> None:
         """
