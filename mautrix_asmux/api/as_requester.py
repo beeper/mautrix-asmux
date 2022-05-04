@@ -37,6 +37,10 @@ def get_command_request_queue(az: AppService, request_id: str) -> str:
     return f"bridge-command-request-{az.id}-{request_id}"
 
 
+class RequestTimedOut(Exception):
+    pass
+
+
 class AppServiceRequester:
     """
     The AS requester abstracts away the differences between http and websocket based
@@ -71,6 +75,37 @@ class AppServiceRequester:
                 COMMAND_REQUEST_CHANNEL: self.handle_bridge_command_request,
             },
         )
+
+    async def _handle_request_over_redis(
+        self,
+        log_msg: str,
+        request_channel: str,
+        request_queue: str,
+        request_data: Union[str, dict],
+        timeout_s: int,
+    ):
+        attempt = 1
+        max_attempts = 5
+        timeout_per_req = timeout_s / max_attempts
+
+        while True:
+            self.log.debug(f"Requesting {log_msg} (attempt={attempt}/{max_attempts})")
+            await self.redis.publish(request_channel, json.dumps(request_data))
+            response = await self.redis.blpop(request_queue, timeout=timeout_per_req)
+            if response is not None:
+                return response[1]
+
+            if attempt >= max_attempts:
+                self.log.warning(f"Gave up waiting for response over Redis for {log_msg}")
+                raise RequestTimedOut
+            attempt += 1
+
+    async def _push_request_response(self, request_queue, result):
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.rpush(request_queue, json.dumps(result))
+            # Expire the queue after 5 minutes if nothing consumes it
+            pipe.expire(request_queue, 300)
+            await pipe.execute()
 
     # Transactions (http & websocket)
 
@@ -117,17 +152,14 @@ class AppServiceRequester:
         Handles and executes websocket ping requests as requested via Redis.
         """
 
-        az = await AppService.get(UUID(message))
+        az = await AppService.get(UUID(json.loads(message)))
         if az and self.server.as_websocket.has_az_websocket(az):
             self.log.debug(f"Handling ping request for AZ: {az.name}")
             pong = await self.server.as_websocket.ping(az)
-            ping_request_queue = get_ping_request_queue(az)
-
-            async with self.redis.pipeline(transaction=True) as pipe:
-                pipe.rpush(ping_request_queue, json.dumps(pong.serialize()))
-                # Expire the queue after 5 minutes if nothing consumes it
-                pipe.expire(ping_request_queue, 300)
-                await pipe.execute()
+            await self._push_request_response(
+                get_ping_request_queue(az),
+                pong.serialize(),
+            )
 
     async def request_bridge_ping(self, az: AppService) -> GlobalBridgeState:
         """
@@ -138,26 +170,17 @@ class AppServiceRequester:
         """
 
         ping_request_queue = get_ping_request_queue(az)
-        attempts = 1
-        max_attempts = 5
-        timeout_per_req = 30 / max_attempts  # 30s
 
-        while True:
-            self.log.debug(
-                f"Requesting ping for AZ: {az.name} (attempt={attempts}/{max_attempts})",
+        try:
+            response = await self._handle_request_over_redis(
+                log_msg=f"ping (appService={az.name}",
+                request_channel=PING_REQUEST_CHANNEL,
+                request_queue=ping_request_queue,
+                request_data=str(az.id),
+                timeout_s=30,
             )
-            await self.redis.publish(PING_REQUEST_CHANNEL, str(az.id))
-            response = await self.redis.blpop(ping_request_queue, timeout=timeout_per_req)
-            if response is not None:
-                response = response[1]
-                break
-
-            if attempts >= max_attempts:
-                self.log.warning(
-                    f"Gave up waiting for ping response over Redis for {az.name} ({az.id})",
-                )
-                return make_ping_error("websocket-unknown-error")
-            attempts += 1
+        except RequestTimedOut:
+            return make_ping_error("websocket-unknown-error")
 
         data = json.loads(response)
         # Workaround for: https://github.com/mautrix/python/pull/98
@@ -253,13 +276,7 @@ class AppServiceRequester:
             result = {"status": status, "resp": resp}
 
             command_request_queue = get_command_request_queue(az, request_id)
-
-            async with self.redis.pipeline(transaction=True) as pipe:
-                pipe.rpush(command_request_queue, json.dumps(result))
-                # Expire the queue after 5 minutes if nothing consumes it
-                pipe.expire(command_request_queue, 300)
-                await pipe.execute()
-
+            await self._push_request_response(command_request_queue, result)
             self.in_flight_command_requests.remove(request_id)
 
     async def exec_command(
@@ -272,39 +289,23 @@ class AppServiceRequester:
             raise Error.exec_not_supported
 
         request_id = str(uuid4())
-        request = json.dumps(
-            {
-                "az_id": str(az.id),
-                "req_id": request_id,
-                "command": command,
-                "data": data,
-            },
-        )
-
         command_request_queue = get_command_request_queue(az, request_id)
 
-        attempts = 1
-        max_attempts = 5
-        timeout_per_req = 15 / max_attempts  # 15s
-
-        while True:
-            self.log.debug(
-                f"Requesting command for AZ: {az.name} "
-                f"(attempt={attempts}/{max_attempts}, requestId={request_id})",
+        try:
+            response = await self._handle_request_over_redis(
+                log_msg=f"command (appService={az.name}, requestId={request_id})",
+                request_channel=COMMAND_REQUEST_CHANNEL,
+                request_queue=command_request_queue,
+                request_data={
+                    "az_id": str(az.id),
+                    "req_id": request_id,
+                    "command": command,
+                    "data": data,
+                },
+                timeout_s=15,
             )
-            await self.redis.publish(COMMAND_REQUEST_CHANNEL, request)
-            response = await self.redis.blpop(command_request_queue, timeout=timeout_per_req)
-            if response is not None:
-                response = response[1]
-                break
-
-            if attempts >= max_attempts:
-                self.log.warning(
-                    "Gave up waiting for command response over Redis for "
-                    f"{az.name} (requestId={request_id})",
-                )
-                return 504, "timed out waiting for response"
-            attempts += 1
+        except RequestTimedOut:
+            return 504, "timed out waiting for response"
 
         data = json.loads(response)
         return data["status"], data["resp"]
