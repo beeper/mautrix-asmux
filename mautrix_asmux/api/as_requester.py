@@ -2,8 +2,8 @@
 # Copyright (C) 2022 Beeper, Inc. All rights reserved.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, Union, cast
+from uuid import UUID, uuid4
 import asyncio
 import json
 import logging
@@ -19,16 +19,22 @@ from ..database import AppService
 from ..redis import RedisPubSub
 from .as_proxy import Events
 from .as_util import make_ping_error, send_failed_metrics, send_successful_metrics
+from .errors import Error, WebsocketErrorResponse, WebsocketNotConnected
 
 if TYPE_CHECKING:
     from ..server import MuxServer
 
 PING_REQUEST_CHANNEL = "bridge-ping-requests"
 WAKEUP_REQUEST_CHANNEL = "bridge-wakeup-requests"
+COMMAND_REQUEST_CHANNEL = "bridge-command-requests"
 
 
 def get_ping_request_queue(az: AppService) -> str:
     return f"bridge-ping-request-{az.id}"
+
+
+def get_command_request_queue(az: AppService, request_id: str) -> str:
+    return f"bridge-command-request-{az.id}-{request_id}"
 
 
 class AppServiceRequester:
@@ -38,9 +44,6 @@ class AppServiceRequester:
     """
 
     log: TraceLogger = cast(TraceLogger, logging.getLogger("mau.api.as_requester"))
-
-    mxid_prefix: str
-    mxid_suffix: str
 
     def __init__(
         self,
@@ -56,6 +59,8 @@ class AppServiceRequester:
         self.redis = redis
         self.redis_pubsub = redis_pubsub
 
+        self.in_flight_command_requests: set[str] = set()
+
     async def setup(self):
         self.log.info("Setting up Redis ping subscriptions")
 
@@ -63,6 +68,7 @@ class AppServiceRequester:
             **{
                 PING_REQUEST_CHANNEL: self.handle_bridge_ping_request,
                 WAKEUP_REQUEST_CHANNEL: self.handle_wakeup_appservice_request,
+                COMMAND_REQUEST_CHANNEL: self.handle_bridge_command_request,
             },
         )
 
@@ -188,6 +194,10 @@ class AppServiceRequester:
     # Wakeups (websocket only)
 
     async def handle_wakeup_appservice_request(self, message: str) -> None:
+        """
+        Handles wakeup requests via Redis and executes wakeup if required.
+        """
+
         az = await AppService.get(UUID(message))
         if az and self.server.as_websocket.has_az_websocket(az):
             self.log.debug(f"Handling wakeup request for: {az.name}")
@@ -198,3 +208,103 @@ class AppServiceRequester:
         if not az.push:
             await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(az.id))
 
+    # Commands (websocket only)
+
+    async def handle_bridge_command_request(self, message: str) -> None:
+        """
+        Handles and executes websocket commands as requested via Redis.
+        """
+
+        request = json.loads(message)
+        request_id: str = request["req_id"]
+
+        if request_id in self.in_flight_command_requests:
+            self.log.debug(f"Already handling command request: {request_id}")
+            return
+
+        az = await AppService.get(UUID(request["az_id"]))
+        command: str = request["command"]
+        data: dict[str, Any] = request["data"]
+
+        if az and self.server.as_websocket.has_az_websocket(az):
+            self.in_flight_command_requests.add(request_id)
+            self.log.debug(f"Handling command request for AZ: {az.name}: {command} ({data})")
+            status: int = 200
+            resp: Union[None, str, dict[str, Any]] = None
+
+            try:
+                resp = await self.server.as_websocket.post_command(az, command, data)
+            except WebsocketErrorResponse as e:
+                status = 400
+                resp = e.data
+            except Exception as e:
+                self.log.warning(
+                    f"Error sending command {command} to {az.name}: {type(e).__name__}: {e}",
+                )
+                status = 502
+                resp = str(e)
+                if isinstance(e, WebsocketNotConnected):
+                    resp = "websocket not connected"
+                    status = 503
+                elif isinstance(e, asyncio.TimeoutError):
+                    resp = "timed out waiting for response"
+                    status = 504
+
+            result = {"status": status, "resp": resp}
+
+            command_request_queue = get_command_request_queue(az, request_id)
+
+            async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.rpush(command_request_queue, json.dumps(result))
+                # Expire the queue after 5 minutes if nothing consumes it
+                pipe.expire(command_request_queue, 300)
+                await pipe.execute()
+
+            self.in_flight_command_requests.remove(request_id)
+
+    async def exec_command(
+        self,
+        az: AppService,
+        command: str,
+        data: dict[str, Any],
+    ) -> tuple[int, Union[None, str, dict[str, Any]]]:
+        if az.push:
+            raise Error.exec_not_supported
+
+        request_id = str(uuid4())
+        request = json.dumps(
+            {
+                "az_id": str(az.id),
+                "req_id": request_id,
+                "command": command,
+                "data": data,
+            },
+        )
+
+        command_request_queue = get_command_request_queue(az, request_id)
+
+        attempts = 1
+        max_attempts = 5
+        timeout_per_req = 15 / max_attempts  # 15s
+
+        while True:
+            self.log.debug(
+                f"Requesting command for AZ: {az.name} "
+                f"(attempt={attempts}/{max_attempts}, requestId={request_id})",
+            )
+            await self.redis.publish(COMMAND_REQUEST_CHANNEL, request)
+            response = await self.redis.blpop(command_request_queue, timeout=timeout_per_req)
+            if response is not None:
+                response = response[1]
+                break
+
+            if attempts >= max_attempts:
+                self.log.warning(
+                    "Gave up waiting for command response over Redis for "
+                    f"{az.name} (requestId={request_id})",
+                )
+                return 504, "timed out waiting for response"
+            attempts += 1
+
+        data = json.loads(response)
+        return data["status"], data["resp"]

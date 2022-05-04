@@ -2,7 +2,6 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional, cast
 from uuid import UUID
-import asyncio
 import base64
 import copy
 import io
@@ -21,7 +20,7 @@ from mautrix.util.config import RecursiveDict, yaml
 from ..config import Config
 from ..database import AppService, Room, User
 from ..redis import RedisCacheHandler
-from .errors import Error, WebsocketErrorResponse, WebsocketNotConnected
+from .errors import Error
 
 if TYPE_CHECKING:
     from ..server import MuxServer
@@ -483,31 +482,17 @@ class ManagementAPI:
             data = await req.json()
         except json.JSONDecodeError:
             raise Error.request_not_json
+
         az = await self._get_appservice(req)
-        if az.push:
-            raise Error.exec_not_supported
-        try:
-            self.log.debug(f"Sending command {command} to {az.name}")
-            resp = await self.server.as_websocket.post_command(az, command, data)
-        except WebsocketErrorResponse as e:
-            return web.json_response(e.data, status=400)
-        except Exception as e:
-            self.log.warning(
-                f"Error sending command {command} to {az.name}: {type(e).__name__}: {e}"
-            )
-            status = 502
-            msg = str(e)
-            if isinstance(e, WebsocketNotConnected):
-                msg = "websocket not connected"
-                status = 503
-            elif isinstance(e, asyncio.TimeoutError):
-                msg = "timed out waiting for response"
-                status = 504
-            return web.json_response(
-                {
-                    "errcode": "FI.MAU.WEBSOCKET_SEND_FAIL",
-                    "error": f"Failed to send command: {msg}",
-                },
-                status=status,
-            )
-        return web.json_response(resp)
+        status, resp = await self.server.as_requester.exec_command(az, command, data)
+
+        if status in (200, 400) and isinstance(resp, dict):
+            return web.json_response(resp, status=status)
+
+        return web.json_response(
+            {
+                "errcode": "FI.MAU.WEBSOCKET_SEND_FAIL",
+                "error": f"Failed to send command: {resp}",
+            },
+            status=status,
+        )
