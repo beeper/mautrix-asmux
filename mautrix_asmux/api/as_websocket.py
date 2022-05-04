@@ -28,10 +28,9 @@ from mautrix.util.opt_prometheus import Counter, Gauge
 
 from ..config import Config
 from ..database import AppService
-from ..redis import RedisPubSub
 from ..sygnal import PushKey
 from .as_proxy import migrate_state_data, send_message_checkpoints
-from .as_queue import WAKEUP_REQUEST_CHANNEL, AppServiceQueue
+from .as_queue import AppServiceQueue
 from .as_util import Events, make_ping_error, send_failed_metrics, send_successful_metrics
 from .cs_proxy import ClientProxy
 from .errors import Error, WebsocketNotConnected
@@ -91,7 +90,6 @@ class AppServiceWebsocketHandler:
         mxid_prefix: str,
         mxid_suffix: str,
         redis: Redis,
-        redis_pubsub: RedisPubSub,
     ) -> None:
         self.server = server
         self.remote_status_endpoint = config["mux.remote_status_endpoint"]
@@ -101,7 +99,6 @@ class AppServiceWebsocketHandler:
         self.sync_proxy_own_address = config["mux.sync_proxy.asmux_address"]
         self.hs_token = config["appservice.hs_token"]
         self.redis = redis
-        self.redis_pubsub = redis_pubsub
         self.mxid_prefix = mxid_prefix
         self.mxid_suffix = mxid_suffix
         self.websockets = {}
@@ -113,15 +110,6 @@ class AppServiceWebsocketHandler:
             timeout=aiohttp.ClientTimeout(total=20), headers={"User-Agent": HTTPAPI.default_ua}
         )
         self.sync_proxy_sess = aiohttp.ClientSession(headers={"User-Agent": HTTPAPI.default_ua})
-
-    async def setup(self):
-        self.log.info("Setting up Redis AS wakeup subscription")
-
-        await self.redis_pubsub.subscribe(
-            **{
-                WAKEUP_REQUEST_CHANNEL: self.handle_wakeup_appservice_request,
-            },
-        )
 
     async def stop(self) -> None:
         self._stopping = True
@@ -342,7 +330,7 @@ class AppServiceWebsocketHandler:
         self.log.debug(f"Successfully sent {txn.txn_id} to {az.name}")
         send_successful_metrics(az, txn)
 
-    def _get_queue(self, az: AppService) -> AppServiceQueue:
+    def get_queue(self, az: AppService) -> AppServiceQueue:
         return self.queues.setdefault(
             az.id,
             AppServiceQueue(
@@ -405,7 +393,7 @@ class AppServiceWebsocketHandler:
                 ws.log.exception(f"Failed to send {txn.txn_id} to {az.name}")
 
     async def _consume_queue(self, az: AppService, ws: WebsocketHandler) -> None:
-        queue = self._get_queue(az)
+        queue = self.get_queue(az)
         ws.log.debug("Started consuming events from queue")
         try:
             while not ws.dead:
@@ -471,18 +459,6 @@ class AppServiceWebsocketHandler:
                             self.log.debug(f"Sygnal didn't report errors waking up {az.name}")
         except Exception as e:
             self.log.warning(f"Failed to send wakeup push for {az.name}: {e}")
-
-    async def queue_events(self, az: AppService, events: Events) -> None:
-        await self._get_queue(az).push(events)
-        if events.pdu:
-            await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(az.id))
-
-    async def handle_wakeup_appservice_request(self, message: str) -> None:
-        az = await AppService.get(UUID(message))
-        if az and self.has_az_websocket(az):
-            self.log.debug(f"Handling wakeup request for: {az.name}")
-            if self.should_wakeup(az, only_if_ws_timeout=True):
-                asyncio.create_task(self.wakeup_appservice(az))
 
     async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
         try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
+import asyncio
 import json
 import logging
 import time
@@ -22,7 +23,8 @@ from .as_util import make_ping_error, send_failed_metrics, send_successful_metri
 if TYPE_CHECKING:
     from ..server import MuxServer
 
-PING_REQUEST_CHANNEL = "bridge-websocket-ping-requests"
+PING_REQUEST_CHANNEL = "bridge-ping-requests"
+WAKEUP_REQUEST_CHANNEL = "bridge-wakeup-requests"
 
 
 def get_ping_request_queue(az: AppService) -> str:
@@ -60,6 +62,7 @@ class AppServiceRequester:
         await self.redis_pubsub.subscribe(
             **{
                 PING_REQUEST_CHANNEL: self.handle_bridge_ping_request,
+                WAKEUP_REQUEST_CHANNEL: self.handle_wakeup_appservice_request,
             },
         )
 
@@ -75,7 +78,10 @@ class AppServiceRequester:
         # delivered in the AppServiceWebsocketHandler.
         if not az.push:
             self.log.trace(f"Queueing {events.txn_id} to {az.name}")
-            await self.server.as_websocket.queue_events(az, events)
+            queue = self.server.as_websocket.get_queue(az)
+            await queue.push(events)
+            if events.pdu:
+                await self.wakeup_if_timeout(az)
             return "ok"
 
         if not az.address:
@@ -178,3 +184,17 @@ class AppServiceRequester:
             remote.user_id = user_id
 
         return pong
+
+    # Wakeups (websocket only)
+
+    async def handle_wakeup_appservice_request(self, message: str) -> None:
+        az = await AppService.get(UUID(message))
+        if az and self.server.as_websocket.has_az_websocket(az):
+            self.log.debug(f"Handling wakeup request for: {az.name}")
+            if self.server.as_websocket.should_wakeup(az, only_if_ws_timeout=True):
+                asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
+
+    async def wakeup_if_timeout(self, az: AppService) -> None:
+        if not az.push:
+            await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(az.id))
+

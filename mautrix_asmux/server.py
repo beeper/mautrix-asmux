@@ -78,7 +78,6 @@ class MuxServer:
             mxid_prefix=mxid_prefix,
             mxid_suffix=mxid_suffix,
             redis=self.redis,
-            redis_pubsub=self.redis_pubsub,
         )
         self.cs_proxy = ClientProxy(
             server=self,
@@ -117,7 +116,6 @@ class MuxServer:
         await self.redis_pubsub.setup()
         await self.redis_cache_handler.setup()
         await self.as_requester.setup()
-        await self.as_websocket.setup()
 
         self.log.debug("Starting web server")
         await self.runner.setup()

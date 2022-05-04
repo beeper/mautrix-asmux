@@ -13,7 +13,6 @@ from ..util import log_task_exceptions
 from .as_proxy import Events
 
 MAX_PDU_AGE_MS = 3 * 60 * 1000
-WAKEUP_REQUEST_CHANNEL = "bridge-wakeup-requests"
 
 
 class AppServiceQueue:
@@ -70,17 +69,13 @@ class AppServiceQueue:
 
     async def push(self, txn: Events) -> None:
         """
-        Push event transaction to the queue, possibly send a wakeup to the target bridge
-        and kick off a background cleanup task in case the websocket pull the txn.
+        Push event transaction to the queue for this appservice.
         """
 
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe.xadd(self.queue_name, {"txn": json.dumps(txn.serialize())})
             pipe.expire(self.queue_name, 86400 * 7)  # 7 days just in case
             await pipe.execute()
-
-        if txn.pdu:
-            await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(self.az.id))
 
     async def contains_pdus(self):
         """
