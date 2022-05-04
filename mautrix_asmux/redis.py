@@ -47,11 +47,12 @@ class RedisPubSub:
 
         while True:
             try:
+                await self.redis.ping()
                 async for message in self.pubsub.listen():
                     channel = message["channel"].decode()
                     handler = self.channel_handlers.get(channel)
                     if handler:
-                        await handler(message["data"].decode())
+                        asyncio.create_task(handler(message["data"].decode()))
                     else:
                         self.log.warning(f"Unexpected redis pubsub message: {message}")
             except Exception as e:
