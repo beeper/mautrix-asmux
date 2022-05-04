@@ -140,7 +140,7 @@ class AppServiceProxy(AppServiceServerMixin):
 
     def get_appservice_lock(self, az):
         if az.id not in self.az_locks:
-            lock = Lock(self.redis, f"az-lock-{az.id}")
+            lock = Lock(self.redis, f"az-lock-{az.id}", sleep=1.0)
             self.az_locks[az.id] = lock
         return self.az_locks[az.id]
 
