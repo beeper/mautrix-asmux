@@ -10,8 +10,8 @@ import aiohttp
 
 from .api import (
     AppServiceHTTPHandler,
-    AppServicePinger,
     AppServiceProxy,
+    AppServiceRequester,
     AppServiceWebsocketHandler,
     ClientProxy,
     ManagementAPI,
@@ -51,7 +51,7 @@ class MuxServer:
             redis_pubsub=self.redis_pubsub,
         )
 
-        self.as_pinger = AppServicePinger(
+        self.as_requester = AppServiceRequester(
             server=self,
             mxid_prefix=mxid_prefix,
             mxid_suffix=mxid_suffix,
@@ -116,7 +116,7 @@ class MuxServer:
         await self.redis.ping()
         await self.redis_pubsub.setup()
         await self.redis_cache_handler.setup()
-        await self.as_pinger.setup()
+        await self.as_requester.setup()
         await self.as_websocket.setup()
 
         self.log.debug("Starting web server")

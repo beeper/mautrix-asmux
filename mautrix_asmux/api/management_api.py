@@ -336,7 +336,7 @@ class ManagementAPI:
 
     async def ping_appservice(self, req: web.Request) -> web.Response:
         az = await self._get_appservice(req)
-        pong = await self.server.as_pinger.ping(az)
+        pong = await self.server.as_requester.ping(az)
         return web.json_response(pong.serialize())
 
     async def delete_appservice(self, req: web.Request) -> web.Response:

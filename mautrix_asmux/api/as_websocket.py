@@ -172,7 +172,7 @@ class AppServiceWebsocketHandler:
             # Only continue on to report unreachable if the websocket is still disconnected. If
             # it's been re-established in the time it took us to handle this async action, do
             # nothing.
-            ping = await self.server.as_pinger.ping(az)
+            ping = await self.server.as_requester.ping(az)
             if ping.bridge_state.state_event == BridgeStateEvent.BRIDGE_UNREACHABLE:
                 await self.send_bridge_status(az, BridgeStateEvent.BRIDGE_UNREACHABLE)
 

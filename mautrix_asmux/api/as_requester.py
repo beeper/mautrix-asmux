@@ -16,7 +16,8 @@ from mautrix.util.logging import TraceLogger
 
 from ..database import AppService
 from ..redis import RedisPubSub
-from .as_util import make_ping_error
+from .as_proxy import Events
+from .as_util import make_ping_error, send_failed_metrics, send_successful_metrics
 
 if TYPE_CHECKING:
     from ..server import MuxServer
@@ -28,8 +29,8 @@ def get_ping_request_queue(az: AppService) -> str:
     return f"bridge-ping-request-{az.id}"
 
 
-class AppServicePinger:
-    log: TraceLogger = cast(TraceLogger, logging.getLogger("mau.api.as_pinger"))
+class AppServiceRequester:
+    log: TraceLogger = cast(TraceLogger, logging.getLogger("mau.api.as_requester"))
 
     mxid_prefix: str
     mxid_suffix: str
