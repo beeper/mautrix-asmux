@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from typing import Callable, Coroutine
 from uuid import UUID
 import asyncio
 import logging
@@ -17,7 +17,7 @@ USER_CACHE_CHANNEL = "user-cache-invalidation"
 
 class RedisPubSub:
     log: logging.Logger = logging.getLogger("mau.redis.PubSub")
-    channel_handlers: dict[str, Callable[[str], Awaitable]]
+    channel_handlers: dict[str, Callable[[str], Coroutine]]
     failure_handlers: list[Callable]
 
     def __init__(self, redis: Redis) -> None:
@@ -32,7 +32,7 @@ class RedisPubSub:
     async def setup(self) -> None:
         asyncio.create_task(self.read_pubsub_messages())
 
-    async def subscribe(self, **channel_handlers: Callable[[str], Awaitable]) -> None:
+    async def subscribe(self, **channel_handlers: Callable[[str], Coroutine]) -> None:
         # NOTE: aioredis 2.0.1 doesn't support async callback functons and
         # we cannot currently switch to redis-py (where aioredis has been
         # merged) due to conflicts with aiohttp.
