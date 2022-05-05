@@ -8,7 +8,6 @@ import logging
 
 from aiohttp import web
 from aioredis import Redis
-from aioredis.lock import Lock
 import aiohttp
 import attr
 
@@ -111,7 +110,7 @@ class AppServiceProxy(AppServiceServerMixin):
     hs_token: str
     mxid_prefix: str
     mxid_suffix: str
-    az_locks: dict[UUID, Lock]
+    az_locks: dict[UUID, asyncio.Lock]
     checkpoint_url: str
     api_server_sess: aiohttp.ClientSession
 
@@ -140,7 +139,7 @@ class AppServiceProxy(AppServiceServerMixin):
 
     def get_appservice_lock(self, az):
         if az.id not in self.az_locks:
-            lock = Lock(self.redis, f"az-lock-{az.id}", sleep=1.0)
+            lock = asyncio.Lock()
             self.az_locks[az.id] = lock
         return self.az_locks[az.id]
 
