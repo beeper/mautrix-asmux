@@ -424,7 +424,9 @@ class AppServiceWebsocketHandler:
         self.prev_wakeup_push[az.id] = time.time()
 
     async def wakeup_appservice(self, az: AppService) -> None:
-        assert az.push_key is not None
+        if az.push_key is None:
+            self.log.debug(f"{az.name} has no push key, cannot send wakeup!")
+            return
         try:
             self.log.debug(f"Trying to wake up {az.name} via Sygnal push")
             resp: aiohttp.ClientResponse
