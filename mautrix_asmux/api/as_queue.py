@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 from contextlib import asynccontextmanager
 import asyncio
 import json
@@ -38,7 +38,7 @@ class AppServiceQueue:
         self.log = logger.getChild(az.name)
 
     @asynccontextmanager
-    async def next(self) -> AsyncIterator[Events]:
+    async def next(self, yield_empty: bool = False) -> AsyncIterator[Optional[Events]]:
         """
         Get and yield events from a Redis stream, removing them after successful processing.
         We use a stream here becacuse this allows us to do a blocking get without popping
@@ -59,6 +59,8 @@ class AppServiceQueue:
                 await asyncio.sleep(0.1)
                 continue
             if not streams_response:
+                if yield_empty:
+                    yield None
                 continue
             stream_txns = streams_response[0][1]  # res[queue[name, data]] -> data
 
@@ -69,7 +71,6 @@ class AppServiceQueue:
             break
 
         yield combined_txn
-
         await self.redis.xdel(self.queue_name, *(id_ for id_, _ in stream_txns))
 
     async def push(self, txn: Events) -> None:

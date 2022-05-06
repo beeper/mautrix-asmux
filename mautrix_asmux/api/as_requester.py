@@ -18,7 +18,7 @@ from mautrix.util.logging import TraceLogger
 from ..database import AppService
 from ..redis import RedisPubSub
 from .as_proxy import Events
-from .as_util import make_ping_error, send_failed_metrics, send_successful_metrics
+from .as_util import make_ping_error
 from .errors import Error, WebsocketErrorResponse, WebsocketNotConnected
 
 if TYPE_CHECKING:
@@ -135,42 +135,31 @@ class AppServiceRequester:
         or queued for a websocket to pull.
         """
 
-        # NOTE: metrics for websocket events are only sent once the txn is
-        # delivered in the AppServiceWebsocketHandler.
-        if not az.push:
-            self.log.trace(f"Queueing {events.txn_id} to {az.name}")
-            queue = self.server.as_websocket.get_queue(az)
-            await queue.push(events)
-            if events.pdu:
-                if self.server.as_websocket.should_wakeup(
-                    az,
-                    min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
-                    min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
-                ):
-                    asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
-                    await self.notify_appservice_wakeup(az)
-                asyncio.create_task(self.send_wakeup_if_not_connected(az))
-            return "ok"
-
-        if not az.address:
+        if az.push and not az.address:
             self.log.warning(
                 f"Not sending transaction {events.txn_id} to {az.name}: no address configured",
             )
             return "no-address"
 
-        try:
-            self.log.trace("Sending transaction to %s: %s", az.name, events)
-            status = await self.server.as_http.post_events(az, events)
-        except Exception:
-            self.log.exception(f"Fatal error sending transaction {events.txn_id} to {az.name}")
-            status = "fatal-error"
+        self.log.trace(f"Queueing {events.txn_id} to {az.name}")
 
-        if status == "ok":
-            self.log.debug(f"Successfully sent {events.txn_id} to {az.name}")
-            send_successful_metrics(az, events)
+        if az.push:
+            await self.server.as_http.get_queue(az).push(events)
+            await self.server.as_http.ensure_pusher_running(az)
         else:
-            send_failed_metrics(az, events)
-        return status
+            await self.server.as_websocket.get_queue(az).push(events)
+            if events.pdu and self.server.as_websocket.should_wakeup(
+                az,
+                min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
+                min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
+            ):
+                asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
+                await self.notify_appservice_wakeup(az)
+
+            # TODO: is this still required?
+            asyncio.create_task(self.send_wakeup_if_not_connected(az))
+
+        return "ok"
 
     # Pings (http & websocket)
 

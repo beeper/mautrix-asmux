@@ -70,7 +70,10 @@ class MuxServer:
             redis=self.redis,
         )
         self.as_http = AppServiceHTTPHandler(
-            mxid_suffix=mxid_suffix, http=self.http, checkpoint_url=checkpoint_url
+            mxid_suffix=mxid_suffix,
+            http=self.http,
+            checkpoint_url=checkpoint_url,
+            redis=self.redis,
         )
         self.as_websocket = AppServiceWebsocketHandler(
             server=self,
@@ -123,6 +126,7 @@ class MuxServer:
         await site.start()
 
     async def stop(self) -> None:
+        self.as_http.stop_pushers()
         asyncio.create_task(self.as_websocket.stop())
         asyncio.create_task(self.http.close())
         self.log.debug("Stopping web server")

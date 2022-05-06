@@ -1,11 +1,14 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
+from uuid import UUID
 import asyncio
 import json
 import logging
 import time
 
 from aiohttp import ClientError, ClientTimeout, ContentTypeError
+from aioredis import Redis
+from aioredis.lock import Lock
 from yarl import URL
 import aiohttp
 
@@ -20,7 +23,8 @@ from mautrix.util.message_send_checkpoint import (
 
 from ..database import AppService
 from .as_proxy import Events, migrate_state_data, send_message_checkpoints
-from .as_util import make_ping_error
+from .as_queue import AppServiceQueue
+from .as_util import make_ping_error, send_failed_metrics, send_successful_metrics
 
 
 class AppServiceHTTPHandler:
@@ -28,16 +32,78 @@ class AppServiceHTTPHandler:
     http: aiohttp.ClientSession
     mxid_suffix: str
     checkpoint_url: str
+    queues: dict[UUID, AppServiceQueue]
+    pusher_locks: dict[UUID, Lock]
+    pusher_tasks: dict[UUID, asyncio.Task]
 
-    def __init__(self, mxid_suffix: str, checkpoint_url: str, http: aiohttp.ClientSession) -> None:
+    def __init__(
+        self,
+        mxid_suffix: str,
+        checkpoint_url: str,
+        http: aiohttp.ClientSession,
+        redis: Redis,
+    ) -> None:
         self.mxid_suffix = mxid_suffix
         self.http = http
+        self.redis = redis
         self.api_server_sess = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=5), headers={"User-Agent": HTTPAPI.default_ua}
+            timeout=aiohttp.ClientTimeout(total=5),
+            headers={"User-Agent": HTTPAPI.default_ua},
         )
         self.checkpoint_url = checkpoint_url
+        self.queues = {}
+        self.pusher_locks = {}
+        self.pusher_tasks = {}
 
-    async def post_events(self, az: AppService, events: Events) -> str:
+    def stop_pushers(self):
+        self.log.debug("Stoping pushers")
+        for task in self.pusher_tasks.values():
+            if not task.done():
+                task.cancel()
+
+    def get_queue(self, az: AppService) -> AppServiceQueue:
+        return self.queues.setdefault(
+            az.id,
+            AppServiceQueue(
+                redis=self.redis,
+                mxid_suffix=self.mxid_suffix,
+                az=az,
+            ),
+        )
+
+    def get_lock(self, az: AppService) -> Lock:
+        return self.pusher_locks.setdefault(
+            az.id,
+            Lock(
+                self.redis,
+                f"bridge-push-lock-{az.id}",
+                sleep=1.0,
+                timeout=60,
+            ),
+        )
+
+    async def ensure_pusher_running(self, az: AppService) -> None:
+        if not await self.get_lock(az).locked():
+            self.pusher_tasks[az.id] = asyncio.create_task(self.post_events_from_queue(az))
+
+    async def post_events_from_queue(self, az: AppService) -> None:
+        lock = self.get_lock(az)
+        queue = self.get_queue(az)
+
+        async with lock:
+            while True:
+                async with queue.next(yield_empty=True) as txn:
+                    if txn is None:  # stops the pusher, releasing the lock
+                        break
+                    status = await self.post_events(lock, az, txn)
+                    if status == "ok":
+                        send_successful_metrics(az, txn)
+                    else:
+                        send_failed_metrics(az, txn)
+
+                await lock.extend(60, replace_ttl=True)
+
+    async def post_events(self, lock: Lock, az: AppService, events: Events) -> str:
         attempt = 0
         url = URL(az.address) / "_matrix/app/v1/transactions" / events.txn_id
         err_prefix = (
@@ -68,6 +134,7 @@ class AppServiceHTTPHandler:
                     last_error = f"HTTP {resp.status}: {await resp.text()!r}"
                     self.log.debug(f"{err_prefix}: {last_error}")
                 else:
+                    self.log.debug(f"Successfully sent {events.txn_id} to {az.name}")
                     return "ok"
             # Don't sleep after last attempt
             if attempt < retries:
@@ -81,6 +148,7 @@ class AppServiceHTTPHandler:
                         info=str(last_error),
                         retry_num=attempt - 1,
                     )
+                await lock.extend(backoff)
                 await asyncio.sleep(backoff)
                 backoff *= 1.5
         last_error = f" (last error: {last_error})" if last_error else ""

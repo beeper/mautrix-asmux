@@ -358,13 +358,15 @@ class AppServiceWebsocketHandler:
         txn: Optional[Events] = None
         try:
             async with queue.next() as txn:
+                if not txn:
+                    return
                 expired = txn.pop_expired_pdu(queue.owner_mxid)
                 if expired:
                     self.log.warning(f"Dropped {len(expired)} expired PDUs")
                     asyncio.create_task(
                         log_task_exceptions(self.log, self.report_expired_pdu(az, expired)),
                     )
-                if not txn.is_empty:
+                if txn and not txn.is_empty:
                     await self._send_next_txn(az, ws, txn, timeout)
         except asyncio.TimeoutError:
             ws.log.warning(
@@ -377,7 +379,7 @@ class AppServiceWebsocketHandler:
                     ws.close(code=WS_NOT_ACKNOWLEDGED, status="transactions_not_acknowledged")
                 )
                 return
-            elif (await queue.contains_pdus()) and self.should_wakeup(az):
+            elif await queue.contains_pdus() and self.should_wakeup(az):
                 await self.wakeup_appservice(az)
         except Exception:
             if txn is None:
