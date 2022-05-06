@@ -14,16 +14,16 @@ from .as_proxy import Events
 
 MAX_PDU_AGE_MS = 3 * 60 * 1000
 
+logger = logging.getLogger("mau.api.as_queue")
+
 
 class AppServiceQueue:
     """
     A Redis based queue used to buffer AS transactions to be sent via websockets.
     """
 
-    log: logging.Logger = logging.getLogger("mau.api.as_queue")
-
     az: AppService
-    max_pdu_age_ms: int
+    log: logging.Logger
 
     def __init__(
         self,
@@ -37,6 +37,7 @@ class AppServiceQueue:
         self.queue_name = f"bridge-txns-{az.id}"
         self.owner_mxid = f"@{az.owner}{mxid_suffix}"
         self.report_expired_pdu = report_expired_pdu
+        self.log = logger.getChild(az.name)
 
     @asynccontextmanager
     async def next(self) -> AsyncIterator[Events]:
@@ -46,7 +47,7 @@ class AppServiceQueue:
         the message until after processing.
         """
 
-        self.log.debug(f"Waiting for txn in: {self.queue_name}")
+        self.log.debug(f"Waiting for next txn in stream: {self.queue_name}")
 
         while True:
             streams_response = await self.redis.xread({self.queue_name: 0}, count=1, block=30000)
@@ -60,7 +61,7 @@ class AppServiceQueue:
                     log_task_exceptions(self.log, self.report_expired_pdu(self.az, expired)),
                 )
             if txn.is_empty:
-                self.log.debug(f"Deleting empty transaction: {self.queue_name}/{txn.txn_id}")
+                self.log.debug(f"Deleting empty txn in stream: {self.queue_name}/{txn.txn_id}")
                 await self.redis.xdel(self.queue_name, stream_id)
             else:
                 break
@@ -85,7 +86,7 @@ class AppServiceQueue:
         Loop through all pending txns for this AS and return true if any contain PDUs.
         """
 
-        self.log.debug(f"Checking queue for PDUs: {self.queue_name}")
+        self.log.debug(f"Checking stream for PDUs: {self.queue_name}")
 
         raw_txns = await self.redis.xrange(self.queue_name)
         for _, raw_txn in raw_txns:
