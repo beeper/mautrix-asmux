@@ -8,6 +8,8 @@ import logging
 
 from aioredis import Redis
 
+from mautrix.types import DeviceLists
+
 from ..database import AppService
 from ..util import log_task_exceptions
 from .as_proxy import Events
@@ -50,28 +52,30 @@ class AppServiceQueue:
         self.log.debug(f"Waiting for next txn in stream: {self.queue_name}")
 
         while True:
-            streams_response = await self.redis.xread({self.queue_name: 0}, count=1, block=30000)
+            streams_response = await self.redis.xread({self.queue_name: 0}, count=10, block=30000)
             if not streams_response:
                 continue
-            stream_id, raw_txn = streams_response[0][1][0]  # res -> queue(name, data) -> data[0]
-            txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
-            expired = txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
-            if expired:
-                self.log.warning(
-                    f"Got {len(expired)} expired PDUs in stream: {self.queue_name}/{txn.txn_id}",
-                )
-                asyncio.create_task(
-                    log_task_exceptions(self.log, self.report_expired_pdu(self.az, expired)),
-                )
-            if txn.is_empty:
+            stream_txns = streams_response[0][1]  # res[queue[name, data]] -> data
+
+            combined_txn = Events("")
+            for stream_id, raw_txn in stream_txns:
+                txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
+                expired = txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
+                if expired:
+                    self.log.warning(f"Dropped {len(expired)} expired PDUs")
+                    asyncio.create_task(
+                        log_task_exceptions(self.log, self.report_expired_pdu(self.az, expired)),
+                    )
+                _append_txn(combined_txn, txn)
+
+            if combined_txn.is_empty:
                 await self.redis.xdel(self.queue_name, stream_id)
             else:
                 break
 
-        yield txn
+        yield combined_txn
 
-        # Now that we have successfully processed the txn, delete it from the stream
-        await self.redis.xdel(self.queue_name, stream_id)
+        await self.redis.xdel(self.queue_name, *(id_ for id_, _ in stream_txns))
 
     async def push(self, txn: Events) -> None:
         """
@@ -100,3 +104,20 @@ class AppServiceQueue:
             if txn.pdu:
                 return True
         return False
+
+
+def _append_txn(combined_txn: Events, txn: Events):
+    if combined_txn.txn_id:
+        combined_txn.txn_id = f"{combined_txn.txn_id},{txn.txn_id}"
+    else:
+        combined_txn.txn_id = txn.txn_id
+    combined_txn.types += txn.types
+    combined_txn.pdu += txn.pdu
+    combined_txn.edu += txn.edu
+    combined_txn.otk_count |= txn.otk_count
+    _append_device_list(combined_txn.device_lists, txn.device_lists)
+
+
+def _append_device_list(l1: DeviceLists, l2: DeviceLists) -> None:
+    l1.changed = list(set(l1.changed) | set(l2.changed))
+    l1.left = list(set(l1.left) | set(l2.left))
