@@ -189,7 +189,12 @@ class ClientProxy:
 
     def get_dms_lock(self, user_id):
         if user_id not in self.dm_locks:
-            lock = Lock(self.redis, f"dms-lock-{user_id}", sleep=1.0)
+            lock = Lock(
+                self.redis,
+                f"dms-lock-{user_id}",
+                sleep=1.0,
+                timeout=180,  # ensure the lock is released after 180s in case of a crash
+            )
             self.dm_locks[user_id] = lock
         return self.dm_locks[user_id]
 
