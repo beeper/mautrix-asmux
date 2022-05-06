@@ -46,6 +46,8 @@ class AppServiceQueue:
         the message until after processing.
         """
 
+        self.log.debug(f"Waiting for txn in: {self.queue_name}")
+
         while True:
             streams_response = await self.redis.xread({self.queue_name: 0}, count=1, block=30000)
             if not streams_response:
@@ -58,6 +60,7 @@ class AppServiceQueue:
                     log_task_exceptions(self.log, self.report_expired_pdu(self.az, expired)),
                 )
             if txn.is_empty:
+                self.log.debug(f"Deleting empty transaction: {self.queue_name}/{txn.txn_id}")
                 await self.redis.xdel(self.queue_name, stream_id)
             else:
                 break
@@ -81,6 +84,8 @@ class AppServiceQueue:
         """
         Loop through all pending txns for this AS and return true if any contain PDUs.
         """
+
+        self.log.debug(f"Checking queue for PDUs: {self.queue_name}")
 
         raw_txns = await self.redis.xrange(self.queue_name)
         for _, raw_txn in raw_txns:
