@@ -391,6 +391,7 @@ class AppServiceWebsocketHandler:
                 await self._consume_queue_one(az, ws, queue)
         except Exception:
             self.log.exception("Fatal error in queue consumer")
+            ws.close(code=WSCloseCode.INTERNAL_ERROR, status="queue_consumer_failed")
         except asyncio.CancelledError as e:
             ws.log.debug(f"Queue consumer cancelled: {e}")
             raise
