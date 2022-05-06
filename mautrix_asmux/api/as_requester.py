@@ -229,9 +229,14 @@ class AppServiceRequester:
         """
 
         az = await AppService.get(UUID(message))
-        if az and self.server.as_websocket.has_az_websocket(az):
+        if (
+            az
+            # NOTE: always call this as it keeps track of the latest wakeup whether or not the
+            # websocket is connected to this asmux instance.
+            and self.server.as_websocket.should_wakeup(az)
+            and self.server.as_websocket.has_az_websocket(az)
+        ):
             self.log.debug(f"Handling wakeup request for: {az.name}")
-            # if self.server.as_websocket.should_wakeup(az, only_if_ws_timeout=True):
             asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
 
     async def wakeup_if_timeout(self, az: AppService) -> None:
