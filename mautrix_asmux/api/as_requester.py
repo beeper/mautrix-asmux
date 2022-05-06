@@ -12,7 +12,7 @@ import time
 from aioredis import Redis
 
 from mautrix.types import UserID
-from mautrix.util.bridge_state import GlobalBridgeState
+from mautrix.util.bridge_state import BridgeStateEvent, GlobalBridgeState
 from mautrix.util.logging import TraceLogger
 
 from ..database import AppService
@@ -119,6 +119,16 @@ class AppServiceRequester:
 
     # Transactions (http & websocket)
 
+    async def send_wakeup_if_not_connected(self, az: AppService) -> None:
+        """
+        If the bridge/websocket doesn't connect over the next ~30s, resend the
+        wakeup request.
+        """
+
+        ping = await self.ping(az)
+        if ping.bridge_state.state_event == BridgeStateEvent.BRIDGE_UNREACHABLE:
+            asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
+
     async def send_transaction(self, az: AppService, events: Events) -> str:
         """
         Send a transaction of events to a target appservice, either via HTTP push
@@ -139,6 +149,7 @@ class AppServiceRequester:
                 ):
                     asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
                     await self.notify_appservice_wakeup(az)
+                asyncio.create_task(self.send_wakeup_if_not_connected(az))
             return "ok"
 
         if not az.address:
