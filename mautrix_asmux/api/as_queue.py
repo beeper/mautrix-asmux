@@ -57,11 +57,13 @@ class AppServiceQueue:
             txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
             expired = txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
             if expired:
+                self.log.warning(
+                    f"Got {len(expired)} expired PDUs in stream: {self.queue_name}/{txn.txn_id}",
+                )
                 asyncio.create_task(
                     log_task_exceptions(self.log, self.report_expired_pdu(self.az, expired)),
                 )
             if txn.is_empty:
-                self.log.debug(f"Deleting empty txn in stream: {self.queue_name}/{txn.txn_id}")
                 await self.redis.xdel(self.queue_name, stream_id)
             else:
                 break
