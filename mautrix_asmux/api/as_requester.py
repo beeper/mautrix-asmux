@@ -129,7 +129,11 @@ class AppServiceRequester:
             queue = self.server.as_websocket.get_queue(az)
             await queue.push(events)
             if events.pdu:
-                await self.wakeup_if_timeout(az)
+                if self.server.as_websocket.should_wakeup(az):
+                    asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
+                    # TODO: need to run should_wakeup on all instances to populate last wakeup
+                    # TODO: move the wakeup call out of as_websocket -> here
+                # await self.wakeup_if_timeout(az)
             return "ok"
 
         if not az.address:
