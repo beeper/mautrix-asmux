@@ -25,9 +25,12 @@ if TYPE_CHECKING:
     from ..server import MuxServer
 
 PING_REQUEST_CHANNEL = "bridge-ping-requests"
-WAKEUP_REQUEST_CHANNEL = "bridge-wakeup-requests"
 COMMAND_REQUEST_CHANNEL = "bridge-command-requests"
 SYNCPROXY_ERROR_REQUEST_CHANNEL = "bridge-syncproxy-error-requests"
+WAKEUP_NOTIFICATION_CHANNEL = "bridge-wakeup-notifications"
+
+# Minimum delay since last websocket push before pre-emptively making a wakeup push on new message
+PREEMPTIVE_WAKEUP_PUSH_DELAY = 30
 
 
 def get_ping_request_queue(az: AppService) -> str:
@@ -77,9 +80,9 @@ class AppServiceRequester:
         await self.redis_pubsub.subscribe(
             **{
                 PING_REQUEST_CHANNEL: self.handle_bridge_ping_request,
-                WAKEUP_REQUEST_CHANNEL: self.handle_wakeup_appservice_request,
                 COMMAND_REQUEST_CHANNEL: self.handle_bridge_command_request,
                 SYNCPROXY_ERROR_REQUEST_CHANNEL: self.handle_syncproxy_error_request,
+                WAKEUP_NOTIFICATION_CHANNEL: self.handle_wakeup_appservice_notification,
             },
         )
 
@@ -129,11 +132,13 @@ class AppServiceRequester:
             queue = self.server.as_websocket.get_queue(az)
             await queue.push(events)
             if events.pdu:
-                if self.server.as_websocket.should_wakeup(az):
+                if self.server.as_websocket.should_wakeup(
+                    az,
+                    min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
+                    min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
+                ):
                     asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
-                    # TODO: need to run should_wakeup on all instances to populate last wakeup
-                    # TODO: move the wakeup call out of as_websocket -> here
-                # await self.wakeup_if_timeout(az)
+                    await self.notify_appservice_wakeup(az)
             return "ok"
 
         if not az.address:
@@ -225,27 +230,20 @@ class AppServiceRequester:
 
         return pong
 
-    # Wakeups (websocket only)
+    # Wakeup notifications (websocket only)
 
-    async def handle_wakeup_appservice_request(self, message: str) -> None:
+    async def handle_wakeup_appservice_notification(self, message: str) -> None:
         """
-        Handles wakeup requests via Redis and executes wakeup if required.
+        Updates internal previous wakeup time for an appservice.
         """
 
         az = await AppService.get(UUID(message))
-        if (
-            az
-            # NOTE: always call this as it keeps track of the latest wakeup whether or not the
-            # websocket is connected to this asmux instance.
-            and self.server.as_websocket.should_wakeup(az)
-            and self.server.as_websocket.has_az_websocket(az)
-        ):
-            self.log.debug(f"Handling wakeup request for: {az.name}")
-            asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
+        if az:
+            self.server.as_websocket.set_prev_wakeup_push(az)
 
-    async def wakeup_if_timeout(self, az: AppService) -> None:
+    async def notify_appservice_wakeup(self, az: AppService) -> None:
         if not az.push:
-            await self.redis.publish(WAKEUP_REQUEST_CHANNEL, str(az.id))
+            await self.redis.publish(WAKEUP_NOTIFICATION_CHANNEL, str(az.id))
 
     # Syncproxy errors (websocket only)
 

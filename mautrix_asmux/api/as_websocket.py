@@ -47,8 +47,6 @@ RETRY_SEND_TIMEOUT = 30
 TIMEOUT_COUNT_LIMIT = 7
 # Minimum number of seconds between all wakeup pushes
 MIN_WAKEUP_PUSH_DELAY = 3
-# Minimum delay since last websocket data before pre-emptively making a wakeup push on new message
-PREEMPTIVE_WAKEUP_PUSH_DELAY = 10 * 60
 
 WS_CLOSE_REPLACED = 4001
 WS_NOT_ACKNOWLEDGED = 4002
@@ -360,13 +358,6 @@ class AppServiceWebsocketHandler:
     async def _consume_queue_one(
         self, az: AppService, ws: WebsocketHandler, queue: AppServiceQueue
     ) -> None:
-        queue_contains_pdus = await queue.contains_pdus()
-        if queue_contains_pdus and self.should_wakeup(
-            az,
-            min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
-            min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
-        ):
-            asyncio.create_task(self.wakeup_appservice(az))
         timeout = FIRST_SEND_TIMEOUT if ws.timeouts == 0 else RETRY_SEND_TIMEOUT
         txn: Optional[Events] = None
         try:
@@ -383,7 +374,7 @@ class AppServiceWebsocketHandler:
                     ws.close(code=WS_NOT_ACKNOWLEDGED, status="transactions_not_acknowledged")
                 )
                 return
-            elif queue_contains_pdus and self.should_wakeup(az):
+            elif (await queue.contains_pdus()) and self.should_wakeup(az):
                 await self.wakeup_appservice(az)
         except Exception:
             if txn is None:
@@ -427,8 +418,10 @@ class AppServiceWebsocketHandler:
                 return False
         if self.prev_wakeup_push.get(az.id, 0) + min_time_since_last_push > now:
             return False
-        self.prev_wakeup_push[az.id] = time.time()
         return True
+
+    def set_prev_wakeup_push(self, az: AppService) -> None:
+        self.prev_wakeup_push[az.id] = time.time()
 
     async def wakeup_appservice(self, az: AppService) -> None:
         assert az.push_key is not None
