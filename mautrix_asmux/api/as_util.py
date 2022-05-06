@@ -64,6 +64,7 @@ class Events:
     def deserialize(cls, data: dict[str, Any]) -> "Events":
         data["pdu"] = data.pop("events", [])
         data["edu"] = data.pop("ephemeral", [])
+        data["types"] = data.pop("types", [])
 
         otk_count = data.pop("device_one_time_keys_count", {})
         if otk_count:
@@ -87,6 +88,8 @@ class Events:
         }
         if self.edu:
             output["ephemeral"] = self.edu
+        if self.types:
+            output["types"] = self.types
         if self.otk_count:
             output["device_one_time_keys_count"] = {  # type: ignore
                 user_id: otk.serialize() for user_id, otk in self.otk_count.items()
