@@ -7,6 +7,7 @@ import json
 import logging
 
 from aioredis import Redis
+import aioredis
 
 from mautrix.types import DeviceLists
 
@@ -52,7 +53,16 @@ class AppServiceQueue:
         self.log.debug(f"Waiting for next txn in stream: {self.queue_name}")
 
         while True:
-            streams_response = await self.redis.xread({self.queue_name: 0}, count=10, block=30000)
+            try:
+                streams_response = await self.redis.xread(
+                    {self.queue_name: 0},
+                    count=10,
+                    block=30000,
+                )
+            except aioredis.exceptions.ConnectionError as e:
+                self.log.warning(f"Error listening for txn from Redis: {e}")
+                await asyncio.sleep(0.1)
+                continue
             if not streams_response:
                 continue
             stream_txns = streams_response[0][1]  # res[queue[name, data]] -> data
