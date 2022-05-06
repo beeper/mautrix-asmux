@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Awaitable, Optional, Union
 from logging import Logger
 
 from multidict import CIMultiDict
+from yarl import URL
 
 from mautrix.types import JSON
 from mautrix.util.logging import TraceLogger
@@ -65,4 +66,71 @@ async def log_task_exceptions(logger: Union[TraceLogger, Logger], awaitable: Awa
         raise
 
 
-__all__ = ["is_double_puppeted", "should_forward_pdu", "copy_headers_no_host"]
+IGNORE_URL_PATH_PARTS = {
+    "_matrix",
+    "client",
+    "v3",
+    "r0",
+}
+
+ALLOWED_URL_PATH_PARTS = {
+    # Rooms
+    "rooms",
+    "createRoom",
+    "joined_rooms",
+    "read_markers",
+    "send",
+    "batch_send",
+    # Events
+    "join",
+    "receipt",
+    "event",
+    "invite",
+    "redact",
+    "state",
+    # Key management
+    "keys",
+    "query",
+    "sendToDevice",
+    # Unstable
+    "unstable",
+    "org.matrix.msc2716",
+    "org.matrix.msc2432",
+    "fi.mau.msc2246",
+    # Media
+    "media",
+    "upload",
+    # Account/profile
+    "presence",
+    "pushrules",
+    "profile",
+    "avatar_url",
+    "displayname",
+    "account",
+    "whoami",
+    "register",
+    "login",
+    "logout",
+}
+
+
+def get_metric_endpoint_for_url(url: URL) -> str:
+    endpoint = [""]
+    for part in url.path.split("/"):
+        if part in IGNORE_URL_PATH_PARTS:
+            continue
+
+        if part in ALLOWED_URL_PATH_PARTS:
+            endpoint.append(part)
+        elif not endpoint or endpoint[-1] != "...":
+            endpoint.append("...")
+
+    return "/".join(endpoint)
+
+
+__all__ = [
+    "is_double_puppeted",
+    "should_forward_pdu",
+    "copy_headers_no_host",
+    "get_metric_endpoint_for_url",
+]

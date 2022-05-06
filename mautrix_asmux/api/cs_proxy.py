@@ -22,7 +22,7 @@ from mautrix.types import EventType, RoomID, UserID
 from mautrix.util.opt_prometheus import Counter
 
 from ..database import AppService, Room, User
-from ..util import copy_headers_no_host
+from ..util import copy_headers_no_host, get_metric_endpoint_for_url
 from .errors import Error
 
 if TYPE_CHECKING:
@@ -317,55 +317,6 @@ class ClientProxy:
             )
             await room.insert()
 
-    @staticmethod
-    def _relevant_path_part(url: URL) -> Optional[str]:
-        path = url.path.replace("/_matrix/media/r0", "/_matrix/media/v3").replace(
-            "/_matrix/client/r0", "/_matrix/client/v3"
-        )
-        parts = path.split("/")
-        if path.startswith("/_matrix/media/v3/"):
-            return f"/media/{parts[4]}"
-        elif path.startswith("/_matrix/client/v3/rooms/") and len(parts) > 6:
-            if len(parts) > 7:
-                return f"/rooms/.../{parts[6]}/..."
-            else:
-                return f"/rooms/.../{parts[6]}"
-        elif path.startswith(
-            "/_matrix/client/unstable/org.matrix.msc2716/rooms/"
-        ) and path.endswith("/batch_send"):
-            return f"/unstable/rooms/.../batch_send"
-        elif path.startswith("/_matrix/client/v3/user/") and len(parts) > 6:
-            if len(parts) > 8 and parts[6] == "rooms":
-                end = "/..." if len(parts) > 9 else ""
-                return f"/user/.../rooms/.../{parts[8]}{end}"
-            else:
-                end = "/..." if len(parts) > 7 else ""
-                return f"/user/.../{parts[6]}{end}"
-        elif path.startswith("/_matrix/client/v3/directory/room/"):
-            return "/directory/room/..."
-        elif path.startswith("/_matrix/client/v3/directory/list/room/"):
-            return "/directory/list/room/..."
-        elif path.startswith("/_matrix/client/v3/join/"):
-            return "/join/..."
-        elif path.startswith("/_matrix/client/v3/sendToDevice/"):
-            return "/sendToDevice/..."
-        elif path.startswith("/_matrix/client/v3/devices/") and len(parts) > 5 and parts[5]:
-            return "/devices/..."
-        elif path.startswith("/_matrix/client/v3/pushrules/") and len(parts) > 5 and parts[5]:
-            return "/pushrules/..."
-        elif path.startswith("/_matrix/client/v3/presence/") and path.endswith("/status"):
-            return f"/presence/.../status"
-        elif path.startswith("/_matrix/client/v3/profile/"):
-            if len(parts) > 6:
-                return f"/profile/.../{parts[6]}"
-            return "/profile/..."
-        elif path.startswith("/_matrix/client/v3/"):
-            return path[len("/_matrix/client/v3") :]
-        elif path.startswith("/_matrix/client/unstable/"):
-            return path[len("/_matrix/client") :]
-        else:
-            return path
-
     async def _proxy(
         self,
         req: web.Request,
@@ -377,7 +328,7 @@ class ClientProxy:
     ) -> tuple[web.Response, aiohttp.ClientResponse]:
         metric_labels = {
             "method": req.method,
-            "endpoint": self._relevant_path_part(url),
+            "endpoint": get_metric_endpoint_for_url(url),
             "owner": "",
             "bridge": "",
         }
