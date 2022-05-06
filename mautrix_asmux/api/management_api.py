@@ -486,7 +486,7 @@ class ManagementAPI:
         az = await self._get_appservice(req)
         status, resp = await self.server.as_requester.exec_command(az, command, data)
 
-        if status in (200, 400) and isinstance(resp, dict):
+        if status in (200, 400) and isinstance(resp, (dict, list)):
             return web.json_response(resp, status=status)
 
         return web.json_response(
