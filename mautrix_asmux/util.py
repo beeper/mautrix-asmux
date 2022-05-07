@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Awaitable, Optional, Union
-from logging import Logger
+import logging
+import re
 
 from multidict import CIMultiDict
 from yarl import URL
@@ -25,6 +26,8 @@ BRIDGE_DOUBLE_PUPPET_INDICATORS = (
 )
 
 CHECKPOINT_TYPES_STR = frozenset(str(evt_type) for evt_type in CHECKPOINT_TYPES)
+
+logger = logging.getLogger("mau.util")
 
 
 def is_double_puppeted(event: JSON) -> bool:
@@ -58,7 +61,7 @@ def copy_headers_no_host(headers: CIMultiDict[str]) -> CIMultiDict[str]:
     return headers_no_host
 
 
-async def log_task_exceptions(logger: Union[TraceLogger, Logger], awaitable: Awaitable):
+async def log_task_exceptions(logger: Union[TraceLogger, logging.Logger], awaitable: Awaitable):
     try:
         return await awaitable
     except Exception:
@@ -66,66 +69,50 @@ async def log_task_exceptions(logger: Union[TraceLogger, Logger], awaitable: Awa
         raise
 
 
-IGNORE_URL_PATH_PARTS = {
-    "_matrix",
-    "client",
-    "v3",
-    "r0",
-}
-
-ALLOWED_URL_PATH_PARTS = {
-    # Rooms
-    "rooms",
-    "createRoom",
-    "joined_rooms",
-    "read_markers",
-    "send",
-    "batch_send",
-    # Events
-    "join",
-    "receipt",
-    "event",
-    "invite",
-    "redact",
-    "state",
-    # Key management
-    "keys",
-    "query",
-    "sendToDevice",
-    # Unstable
-    "unstable",
-    "org.matrix.msc2716",
-    "org.matrix.msc2432",
-    "fi.mau.msc2246",
-    # Media
-    "media",
-    "upload",
-    # Account/profile
-    "presence",
-    "pushrules",
-    "profile",
-    "avatar_url",
-    "displayname",
-    "account",
-    "whoami",
-    "register",
-    "login",
-    "logout",
-}
+def _client_regex(path: str):
+    return re.compile(rf"^/_matrix/client/(?:r0|v3|unstable){path}")
 
 
-def get_metric_endpoint_for_url(url: URL) -> str:
-    endpoint = [""]
-    for part in url.path.split("/"):
-        if part in IGNORE_URL_PATH_PARTS:
-            continue
+def _media_regex(path: str):
+    return re.compile(rf"^/_matrix/media{path}")
 
-        if part in ALLOWED_URL_PATH_PARTS:
-            endpoint.append(part)
-        elif not endpoint or endpoint[-1] != "...":
-            endpoint.append("...")
 
-    return "/".join(endpoint)
+# NOTE: the order of these affects performance, most popular routes first
+REGEX_TO_ENDPOINT = {
+    _client_regex(r"/rooms/[^/]+/([a-z_]+)"): "/rooms/.../%s",
+    _client_regex(
+        r"/(sync|account/whoami|joined_rooms|register|createRoom|login|keys/(?:query|upload|claim))"
+    ): "/%s",
+    _client_regex(r"/(sendToDevice|pushrules)/.+"): "/%s/...",
+    _client_regex(r"/profile/[^/]+/([a-z_]+)"): "/profile/.../%s",
+    _media_regex(
+        r"/unstable/fi.mau.msc2246/upload/.+"
+    ): "/media/unstable/fi.mau.msc2246/upload/...",
+    _media_regex(r"/unstable/fi.mau.msc2246/create"): "/media/unstable/fi.mau.msc2246/create",
+    _media_regex(r"/(?:r0|v3)/(upload|config)"): "/media/v3/%s",
+    _media_regex(r"/(?:r0|v3)/download/.+"): "/media/v3/download/...",
+    _client_regex(r"/profile/[^/]+"): "/profile/...",
+    _client_regex(r"/user/[^/]+/account_data/.+"): "/user/.../account_data/...",
+    _client_regex(r"/user/[^/]+/rooms/![^/]+/tags"): "/user/.../rooms/.../tags",
+    _client_regex(r"/user/[^/]+/filter"): "/user/.../filter",
+    _client_regex(r"/join/.+"): "/join/...",
+    _client_regex(
+        r"/org.matrix.msc2716/rooms/[^/]+/batch_send"
+    ): "/org.matrix.msc2716/rooms/.../batch_send",
+    _client_regex(r"/presence/[^/]+/([a-z]+)"): "/presence/.../%s",
+    _client_regex(r"/directory/room/.+"): "/directory/room/...",
+    re.compile(r"/_matrix/client/versions"): "/versions",
+}.items()
+
+
+def get_metric_endpoint_for_url(url: URL) -> Optional[str]:
+    url_path = url.path
+    for regex, endpoint in REGEX_TO_ENDPOINT:
+        match = regex.match(url_path)
+        if match:
+            return endpoint % match.groups()
+    logger.warning("Path not converted to metric endpoint: %s", url_path)
+    return None
 
 
 __all__ = [
