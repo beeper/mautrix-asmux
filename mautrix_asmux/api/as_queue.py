@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator
 from contextlib import asynccontextmanager
 import asyncio
 import json
@@ -12,10 +12,7 @@ import aioredis
 from mautrix.types import DeviceLists
 
 from ..database import AppService
-from ..util import log_task_exceptions
-from .as_proxy import Events
-
-MAX_PDU_AGE_MS = 3 * 60 * 1000
+from .as_util import Events
 
 logger = logging.getLogger("mau.api.as_queue")
 
@@ -33,13 +30,11 @@ class AppServiceQueue:
         redis: Redis,
         mxid_suffix: str,
         az: AppService,
-        report_expired_pdu: Callable,
     ) -> None:
         self.redis = redis
         self.az = az
         self.queue_name = f"bridge-txns-{az.id}"
         self.owner_mxid = f"@{az.owner}{mxid_suffix}"
-        self.report_expired_pdu = report_expired_pdu
         self.log = logger.getChild(az.name)
 
     @asynccontextmanager
@@ -70,18 +65,8 @@ class AppServiceQueue:
             combined_txn = Events("")
             for stream_id, raw_txn in stream_txns:
                 txn = Events.deserialize(json.loads(raw_txn[b"txn"]))
-                expired = txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
-                if expired:
-                    self.log.warning(f"Dropped {len(expired)} expired PDUs")
-                    asyncio.create_task(
-                        log_task_exceptions(self.log, self.report_expired_pdu(self.az, expired)),
-                    )
                 _append_txn(combined_txn, txn)
-
-            if combined_txn.is_empty:
-                await self.redis.xdel(self.queue_name, stream_id)
-            else:
-                break
+            break
 
         yield combined_txn
 
@@ -110,7 +95,7 @@ class AppServiceQueue:
             # Note: we remove the expired PDUs here for the purpose of indicating whether
             # the queue contains them. We don't actually write this back to Redis at all,
             # this is handled upon retrieval in next() above.
-            txn.pop_expired_pdu(self.owner_mxid, MAX_PDU_AGE_MS)
+            txn.pop_expired_pdu(self.owner_mxid)
             if txn.pdu:
                 return True
         return False

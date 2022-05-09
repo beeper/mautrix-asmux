@@ -16,6 +16,9 @@ from ..database import AppService
 from ..segment import track_events
 from ..util import is_double_puppeted
 
+# PDUs older than this are considered expired, not delivered to bridge
+MAX_PDU_AGE_MS: int = 3 * 60 * 1000
+
 SUCCESSFUL_EVENTS = Counter(
     "asmux_successful_events",
     "Number of PDUs that were successfully sent to the target appservice",
@@ -53,6 +56,7 @@ def make_ping_error(
 
 @dataclass
 class Events:
+
     txn_id: str
     pdu: list[JSON] = attr.ib(factory=lambda: [])
     edu: list[JSON] = attr.ib(factory=lambda: [])
@@ -108,7 +112,7 @@ class Events:
             and not self.device_lists.left
         )
 
-    def pop_expired_pdu(self, owner: str, max_age: int) -> List[JSON]:
+    def pop_expired_pdu(self, owner: str, max_age: int = MAX_PDU_AGE_MS) -> List[JSON]:
         now = int(time.time() * 1000)
         filtered = []
         new_pdu = []

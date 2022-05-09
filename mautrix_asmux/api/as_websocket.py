@@ -29,6 +29,7 @@ from mautrix.util.opt_prometheus import Counter, Gauge
 from ..config import Config
 from ..database import AppService
 from ..sygnal import PushKey
+from ..util import log_task_exceptions
 from .as_proxy import migrate_state_data, send_message_checkpoints
 from .as_queue import AppServiceQueue
 from .as_util import Events, make_ping_error, send_failed_metrics, send_successful_metrics
@@ -331,12 +332,7 @@ class AppServiceWebsocketHandler:
     def get_queue(self, az: AppService) -> AppServiceQueue:
         return self.queues.setdefault(
             az.id,
-            AppServiceQueue(
-                redis=self.redis,
-                mxid_suffix=self.mxid_suffix,
-                az=az,
-                report_expired_pdu=self.report_expired_pdu,
-            ),
+            AppServiceQueue(redis=self.redis, mxid_suffix=self.mxid_suffix, az=az),
         )
 
     async def report_expired_pdu(self, az: AppService, expired: List[JSON]) -> None:
@@ -362,7 +358,14 @@ class AppServiceWebsocketHandler:
         txn: Optional[Events] = None
         try:
             async with queue.next() as txn:
-                await self._send_next_txn(az, ws, txn, timeout)
+                expired = txn.pop_expired_pdu(queue.owner_mxid)
+                if expired:
+                    self.log.warning(f"Dropped {len(expired)} expired PDUs")
+                    asyncio.create_task(
+                        log_task_exceptions(self.log, self.report_expired_pdu(az, expired)),
+                    )
+                if not txn.is_empty:
+                    await self._send_next_txn(az, ws, txn, timeout)
         except asyncio.TimeoutError:
             ws.log.warning(
                 f"Failed to send {txn.txn_id} to {az.name}: "  # type: ignore
