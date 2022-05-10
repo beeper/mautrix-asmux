@@ -83,8 +83,16 @@ class AppServiceHTTPHandler:
         )
 
     async def ensure_pusher_running(self, az: AppService) -> None:
-        if not await self.get_lock(az).locked():
-            self.pusher_tasks[az.id] = asyncio.create_task(self.post_events_from_queue(az))
+        # Shortcut: we have the pusher and it's running
+        task = self.pusher_tasks.get(az.id)
+        if task and not task.done():
+            return
+
+        # Another asmux instance is running the pusher, nothing to do here
+        if await self.get_lock(az).locked():
+            return
+
+        self.pusher_tasks[az.id] = asyncio.create_task(self.post_events_from_queue(az))
 
     async def post_events_from_queue(self, az: AppService) -> None:
         lock = self.get_lock(az)
