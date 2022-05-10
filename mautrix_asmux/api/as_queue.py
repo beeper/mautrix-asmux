@@ -61,6 +61,7 @@ class AppServiceQueue:
             if not streams_response:
                 if yield_empty:
                     yield None
+                    return
                 continue
             stream_txns = streams_response[0][1]  # res[queue[name, data]] -> data
 
