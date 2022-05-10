@@ -92,6 +92,7 @@ class AppServiceHTTPHandler:
         if await self.get_lock(az).locked():
             return
 
+        self.log.debug("Starting HTTP pusher for %s", az.name)
         self.pusher_tasks[az.id] = asyncio.create_task(self.post_events_from_queue(az))
 
     async def post_events_from_queue(self, az: AppService) -> None:
@@ -110,6 +111,8 @@ class AppServiceHTTPHandler:
                         send_failed_metrics(az, txn)
 
                 await lock.extend(60, replace_ttl=True)
+
+        self.log.debug("Stopping HTTP pusher for %s", az.name)
 
     async def post_events(self, lock: Lock, az: AppService, events: Events) -> str:
         attempt = 0
