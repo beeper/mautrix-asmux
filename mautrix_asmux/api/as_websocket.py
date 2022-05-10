@@ -14,7 +14,12 @@ from yarl import URL
 import aiohttp
 
 from mautrix.api import HTTPAPI
-from mautrix.errors import MatrixStandardRequestError, make_request_error, standard_error
+from mautrix.errors import (
+    MatrixStandardRequestError,
+    MNotFound,
+    make_request_error,
+    standard_error,
+)
 from mautrix.types import JSON
 from mautrix.util.bridge_state import BridgeState, BridgeStateEvent, GlobalBridgeState
 from mautrix.util.logging import TraceLogger
@@ -206,7 +211,7 @@ class AppServiceWebsocketHandler:
             "address": self.sync_proxy_own_address,
             "is_proxy": True,
         }
-        self.log.debug(f"Requesting sync proxy start for {az.id}")
+        self.log.debug(f"Requesting sync proxy start for {az.name}")
         self.log.trace("Sync proxy data: %s", req)
         async with self.sync_proxy_sess.put(url, json=req, headers=headers) as resp:
             return await self._get_response(resp)
@@ -220,16 +225,16 @@ class AppServiceWebsocketHandler:
     async def stop_sync_proxy(self, az: AppService) -> None:
         url = self.sync_proxy.with_path("/_matrix/client/unstable/fi.mau.syncproxy") / str(az.id)
         headers = {"Authorization": f"Bearer {self.sync_proxy_token}"}
-        self.log.debug(f"Requesting sync proxy stop for {az.id}")
+        self.log.debug(f"Requesting sync proxy stop for {az.name}")
         try:
             async with self.sync_proxy_sess.delete(url, headers=headers) as resp:
                 await self._get_response(resp)
-            self.log.debug(f"Stopped sync proxy for {az.id}")
-        except SyncProxyNotActive as e:
-            self.log.debug(f"Failed to request sync proxy stop for {az.id}: {e}")
+            self.log.debug(f"Stopped sync proxy for {az.name}")
+        except (MNotFound, SyncProxyNotActive) as e:
+            self.log.debug(f"Failed to request sync proxy stop for {az.name}: {e}")
         except Exception as e:
             self.log.warning(
-                f"Failed to request sync proxy stop for {az.id}: {type(e).__name__}: {e}"
+                f"Failed to request sync proxy stop for {az.name}: {type(e).__name__}: {e}"
             )
             self.log.trace("Sync proxy stop error", exc_info=True)
 
@@ -366,7 +371,7 @@ class AppServiceWebsocketHandler:
                     asyncio.create_task(
                         log_task_exceptions(self.log, self.report_expired_pdu(az, expired)),
                     )
-                if txn and not txn.is_empty:
+                if not txn.is_empty:
                     await self._send_next_txn(az, ws, txn, timeout)
         except asyncio.TimeoutError:
             ws.log.warning(
