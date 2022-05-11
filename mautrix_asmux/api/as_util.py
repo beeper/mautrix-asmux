@@ -37,6 +37,7 @@ def send_metrics(az: AppService, txn: Events, metric: Counter) -> None:
 
 
 def send_successful_metrics(az: AppService, txn: Events) -> None:
+    track_events(az, txn)
     return send_metrics(az, txn, SUCCESSFUL_EVENTS)
 
 
