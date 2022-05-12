@@ -271,20 +271,18 @@ class AppServiceWebsocketHandler:
         except KeyError:
             pass
         else:
-            ws.log.debug(f"New websocket connection coming in, closing old one")
-
+            ws.log.debug("New websocket connection coming in, closing old one")
             await old_websocket.close(code=WS_CLOSE_REPLACED, status="conn_replaced")
         try:
             self.websockets[az.id] = ws
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).inc()
             await ws.send(command="connect", status="connected")
-            ws.queue_task = asyncio.create_task(self._consume_queue(az, ws))
+            asyncio.create_task(self._consume_queue(az, ws))
             await ws.handle()
         except Exception as e:
             ws.log.warning(f"Exception in websocket handler: {e}")
         finally:
             ws.log.debug("Websocket handler finished")
-            ws.cancel_queue_task("Websocket disconnected")
             ws.dead = True
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).dec()
             if self.websockets.get(az.id) == ws:
@@ -396,19 +394,18 @@ class AppServiceWebsocketHandler:
     async def _consume_queue(self, az: AppService, ws: WebsocketHandler) -> None:
         queue = self.get_queue(az)
         ws.log.debug("Started consuming events from queue")
+
         try:
             while not ws.dead:
                 await self._consume_queue_one(az, ws, queue)
         except Exception:
             self.log.exception("Fatal error in queue consumer")
-            asyncio.create_task(
-                ws.close(code=WSCloseCode.INTERNAL_ERROR, status="queue_consumer_failed")
-            )
-        except asyncio.CancelledError as e:
-            ws.log.debug(f"Queue consumer cancelled: {e}")
-            raise
-        else:
-            self.log.warning("Websocket seems to have died without cancelling queue consumer?")
+        finally:
+            if not ws.dead:
+                ws.log.critical("Queue consumer stopped but websocket not dead, closing!")
+                asyncio.create_task(
+                    ws.close(code=WSCloseCode.INTERNAL_ERROR, status="queue_consumer_failed")
+                )
 
     def should_wakeup(
         self,

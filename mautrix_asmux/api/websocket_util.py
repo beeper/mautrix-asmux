@@ -128,19 +128,10 @@ class WebsocketHandler:
             self.log.debug(f"Received {command} {req_id or '<no id>'}: {data}")
             asyncio.create_task(self._call_handler(handler, command, req_id, data))
 
-    def cancel_queue_task(self, reason: str) -> None:
-        if self.queue_task is not None and not self.queue_task.done():
-            self.queue_task.cancel(reason)
-            self.log.debug("Cancelled queue task (%s)", reason)
-        else:
-            self.log.debug("Queue task seems to be cancelled already (%s)", reason)
-
     async def close(self, code: int | WSCloseCode, status: str | None = None) -> None:
         try:
             message = f"Closing websocket ({code} / {status})"
             self.log.debug(message)
-            self.cancel_queue_task(message)
-            await asyncio.sleep(0)  # allow the cancel to happen
             res_message = (
                 json.dumps({"command": "disconnect", "status": status}).encode("utf-8")
                 if status
@@ -190,7 +181,7 @@ class WebsocketHandler:
             async for msg in self._ws:
                 self.last_received = time.time()
                 if msg.type == WSMsgType.ERROR:
-                    self.log.error(f"Error in websocket connection", exc_info=self._ws.exception())
+                    self.log.error("Error in websocket connection", exc_info=self._ws.exception())
                     break
                 elif msg.type == WSMsgType.CLOSE:
                     self.log.debug("Websocket close message received")
