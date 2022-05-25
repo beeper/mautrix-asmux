@@ -117,6 +117,10 @@ class AppServiceRequester:
             pipe.expire(request_queue, 300)
             await pipe.execute()
 
+    async def send_wakeup(self, az: AppService) -> None:
+        asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
+        await self.notify_appservice_wakeup(az)
+
     # Transactions (http & websocket)
 
     async def send_wakeup_if_not_connected(self, az: AppService) -> None:
@@ -127,7 +131,8 @@ class AppServiceRequester:
 
         ping = await self.ping(az)
         if ping.bridge_state.state_event == BridgeStateEvent.BRIDGE_UNREACHABLE:
-            asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
+            self.log.info("Resending wakeup request after no connection to %s", az.name)
+            await self.send_wakeup(az)
 
     async def send_transaction(self, az: AppService, events: Events) -> str:
         """
@@ -153,8 +158,7 @@ class AppServiceRequester:
                 min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
                 min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
             ):
-                asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
-                await self.notify_appservice_wakeup(az)
+                await self.send_wakeup(az)
 
             # TODO: is this still required?
             asyncio.create_task(self.send_wakeup_if_not_connected(az))
