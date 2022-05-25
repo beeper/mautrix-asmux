@@ -493,8 +493,6 @@ class AppServiceWebsocketHandler:
     async def post_command(
         self, az: AppService, command: str, data: dict[str, Any]
     ) -> dict[str, Any]:
-        if self.should_wakeup(az):
-            asyncio.create_task(self.wakeup_appservice(az))
         attempts = 0
         while True:
             try:

@@ -353,6 +353,9 @@ class AppServiceRequester:
         if az.push:
             raise Error.exec_not_supported
 
+        if self.server.as_websocket.should_wakeup(az):
+            await self.send_wakeup(az)
+
         request_id = str(uuid4())
         command_request_queue = get_command_request_queue(az, request_id)
 
