@@ -20,6 +20,7 @@ from ..redis import RedisPubSub
 from .as_proxy import Events
 from .as_util import make_ping_error
 from .errors import Error, WebsocketErrorResponse, WebsocketNotConnected
+from .websocket_util import SENSITIVE_REQUESTS
 
 if TYPE_CHECKING:
     from ..server import MuxServer
@@ -316,7 +317,8 @@ class AppServiceRequester:
 
         if az and self.server.as_websocket.has_az_websocket(az):
             self.in_flight_command_requests.add(request_id)
-            self.log.debug(f"Handling command request for AZ: {az.name}: {command} ({data})")
+            log_data = data if command not in SENSITIVE_REQUESTS else "content omitted"
+            self.log.debug(f"Handling command request for AZ: {az.name}: {command} ({log_data})")
             status: int = 200
             resp: Union[None, str, dict[str, Any]] = None
 

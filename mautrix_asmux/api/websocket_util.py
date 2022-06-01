@@ -2,7 +2,7 @@
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, NamedTuple, Optional
 import asyncio
 import json
 import logging
@@ -17,11 +17,32 @@ Data = dict[str, Any]
 CommandHandler = Callable[["WebsocketHandler", Data], Awaitable[Optional[Data]]]
 
 
+class RequestWaiter(NamedTuple):
+    fut: asyncio.Future
+    command: str
+
+    def redact_log_content(self, data: str, req: dict) -> str:
+        if self.command in SENSITIVE_RESPONSES:
+            content = req.get("data")
+            if isinstance(content, (list, dict)):
+                return f"content omitted: {type(content).__name__} with {len(content)} items"
+            return "content omitted"
+        elif len(data) > LOG_CONTENT_MAX_LENGTH:
+            return data[:LOG_CONTENT_MAX_LENGTH] + "..."
+        else:
+            return str(req)
+
+
+SENSITIVE_REQUESTS = ("start_dm", "resolve_identifier", "start_sync", "push_key")
+SENSITIVE_RESPONSES = ("list_contacts", "start_dm", "resolve_identifier")
+LOG_CONTENT_MAX_LENGTH = 4096
+
+
 class WebsocketHandler:
     _ws: web.WebSocketResponse
     log: logging.Logger
     type_name: str
-    _request_waiters: dict[int, asyncio.Future]
+    _request_waiters: dict[int, RequestWaiter]
     _command_handlers: dict[str, CommandHandler]
     _prev_req_id: int
     proto: int
@@ -77,8 +98,8 @@ class WebsocketHandler:
 
     def _clear_request_waiters(self) -> None:
         for req_id, waiter in self._request_waiters.items():
-            if not waiter.done():
-                waiter.set_exception(WebsocketClosedError())
+            if not waiter.fut.done():
+                waiter.fut.set_exception(WebsocketClosedError())
         self._request_waiters = {}
 
     def _handle_text(self, msg: WSMessage) -> None:
@@ -107,14 +128,18 @@ class WebsocketHandler:
             except KeyError:
                 self.log.debug(f"Unhandled response received: {req}")
             else:
-                if waiter.cancelled():
-                    self.log.debug(f"Got response to {req_id}, but the waiter is cancelled: {req}")
+                log_content = waiter.redact_log_content(msg.data, req)
+                if waiter.fut.cancelled():
+                    self.log.debug(
+                        f"Got response to {req_id} ({waiter.command}), "
+                        f"but the waiter is cancelled: {log_content}"
+                    )
                     return
-                self.log.debug(f"Received response to {req_id}: {req}")
+                self.log.debug(f"Received response to {req_id} ({waiter.command}): {log_content}")
                 if command == "response":
-                    waiter.set_result(data)
+                    waiter.fut.set_result(data)
                 elif command == "error":
-                    waiter.set_exception(WebsocketErrorResponse(data))
+                    waiter.fut.set_exception(WebsocketErrorResponse(data))
             return
 
         try:
@@ -125,7 +150,8 @@ class WebsocketHandler:
                 resp = {"code": "UnknownCommand", "message": f"Unknown command {command}"}
                 asyncio.create_task(self.send(command="error", id=req_id, data=resp))
         else:
-            self.log.debug(f"Received {command} {req_id or '<no id>'}: {data}")
+            log_data = data if command not in SENSITIVE_REQUESTS else "content omitted"
+            self.log.debug(f"Received {command} {req_id or '<no id>'}: {log_data}")
             asyncio.create_task(self._call_handler(handler, command, req_id, data))
 
     async def close(self, code: int | WSCloseCode, status: str | None = None) -> None:
@@ -161,7 +187,8 @@ class WebsocketHandler:
     ) -> Optional[Data]:
         self._prev_req_id += 1
         req_id = self._prev_req_id
-        self._request_waiters[req_id] = fut = asyncio.get_running_loop().create_future()
+        fut = asyncio.get_running_loop().create_future()
+        self._request_waiters[req_id] = RequestWaiter(fut=fut, command=command)
         await self.send(
             command=command,
             id=req_id,
