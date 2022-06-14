@@ -404,6 +404,7 @@ class ManagementAPI:
         if not az.created_:
             await az.set_address(data.get("address"))
             await az.set_push(data.get("push"))
+            await self.redis_cache_handler.invalidate_az(az)
         config_password = None
         lifetime = None
         if data.get("generate_config"):
