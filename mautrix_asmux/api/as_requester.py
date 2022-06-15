@@ -364,7 +364,7 @@ class AppServiceRequester:
         try:
             response = await self._handle_request_over_redis(
                 log_msg=(
-                    f"command (appService={az.name}, requestId={request_id}, command={command})",
+                    f"command (appService={az.name}, requestId={request_id}, command={command})"
                 ),
                 request_channel=COMMAND_REQUEST_CHANNEL,
                 request_queue=command_request_queue,
