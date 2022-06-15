@@ -198,7 +198,7 @@ class AppServiceRequester:
                 request_channel=PING_REQUEST_CHANNEL,
                 request_queue=ping_request_queue,
                 request_data=str(az.id),
-                timeout_s=30,
+                timeout_s=50,
             )
         except RequestTimedOut:
             return make_ping_error("websocket-unknown-error")
@@ -363,7 +363,9 @@ class AppServiceRequester:
 
         try:
             response = await self._handle_request_over_redis(
-                log_msg=f"command (appService={az.name}, requestId={request_id})",
+                log_msg=(
+                    f"command (appService={az.name}, requestId={request_id}, command={command})",
+                ),
                 request_channel=COMMAND_REQUEST_CHANNEL,
                 request_queue=command_request_queue,
                 request_data={
