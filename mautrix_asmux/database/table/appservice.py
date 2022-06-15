@@ -163,13 +163,14 @@ class AppService(Base):
         )
         self._add_to_cache()
 
-    async def set_address(self, address: str, *, conn: Connection | None = None) -> None:
+    async def set_address(self, address: str, *, conn: Connection | None = None) -> bool:
         if address is None or self.address == address:
-            return
+            return False
         self.address = address
         await (conn or self.db).execute(
             "UPDATE appservice SET address=$2 WHERE id=$1", self.id, self.address
         )
+        return True
 
     async def set_push(self, push: bool) -> None:
         if push is None or push == self.push:
