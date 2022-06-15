@@ -402,7 +402,10 @@ class ManagementAPI:
         else:
             az = self._error_wrap(req, await AppService.get(uuid))
         if not az.created_:
-            await az.set_address(data.get("address"))
+            address = data.get("address")
+            did_update = await az.set_address(address)
+            if did_update:
+                self.log.info(f"Updated AS address {az.name}: {address}")
             await az.set_push(data.get("push"))
             await self.redis_cache_handler.invalidate_az(az)
         config_password = None
