@@ -154,7 +154,7 @@ class AppServiceRequester:
             await self.server.as_http.ensure_pusher_running(az)
         else:
             await self.server.as_websocket.get_queue(az).push(events)
-            if events.pdu and self.server.as_websocket.should_wakeup(
+            if self.server.as_websocket.should_wakeup(
                 az,
                 min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
                 min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
