@@ -196,6 +196,7 @@ class WebsocketHandler:
             data=kwargs,
             **(top_level_data or {}),
         )
+        self.log.debug(f"Sent request {req_id} ({command})")
         return await fut
 
     def prepare(self, req: web.Request) -> Awaitable[Any]:
