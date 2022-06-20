@@ -493,18 +493,14 @@ class AppServiceWebsocketHandler:
     async def post_command(
         self, az: AppService, command: str, data: dict[str, Any]
     ) -> dict[str, Any]:
-        attempts = 0
-        while True:
-            try:
-                ws = self.websockets[az.id]
-                break
-            except KeyError:
-                attempts += 1
-                # TODO do something more advanced than sleeping?
-                await asyncio.sleep(0.25)
-                if attempts > 20:
-                    raise WebsocketNotConnected()
-        return await asyncio.wait_for(ws.request(command, raise_errors=True, **data), timeout=10)  # type: ignore
+        try:
+            ws = self.websockets[az.id]
+        except KeyError:
+            raise WebsocketNotConnected()
+        return await asyncio.wait_for(
+            ws.request(command, raise_errors=True, **data),
+            timeout=10,
+        )
 
     async def ping(self, az: AppService) -> GlobalBridgeState:
         try:

@@ -184,7 +184,7 @@ class WebsocketHandler:
         top_level_data: dict[str, Any] | None = None,
         raise_errors: bool = False,
         **kwargs: Any,
-    ) -> Optional[Data]:
+    ) -> Data:
         self._prev_req_id += 1
         req_id = self._prev_req_id
         fut = asyncio.get_running_loop().create_future()
