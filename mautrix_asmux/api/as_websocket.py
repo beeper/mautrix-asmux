@@ -241,6 +241,20 @@ class AppServiceWebsocketHandler:
     def has_az_websocket(self, az: AppService) -> bool:
         return az.id in self.websockets
 
+    async def close_stale_az_websocket(self, az: AppService) -> None:
+        """
+        Close any active websocket for this appservice as a new one has come in.
+        """
+        try:
+            # Popping the websocket is essential here which will prevent the handler
+            # from stopping sync proxy (this is OK because we call this function
+            # when a new websocket connection is opened for this appservice).
+            ws = self.websockets.pop(az.id)
+        except KeyError:
+            return
+        ws.log.debug("New websocket connection coming in, closing old one")
+        await ws.close(code=WS_CLOSE_REPLACED, status="conn_replaced")
+
     async def handle_ws(self, req: web.Request) -> web.WebSocketResponse:
         if self._stopping:
             raise Error.server_shutting_down
@@ -266,13 +280,10 @@ class AppServiceWebsocketHandler:
         ws.set_handler("start_sync", lambda _, data: self.start_sync_proxy(az, data))  # type: ignore
         ws.set_handler("ping", lambda ws, _: self.ping_server(az, ws))  # type: ignore
         await ws.prepare(req)
-        try:
-            old_websocket = self.websockets.pop(az.id)
-        except KeyError:
-            pass
-        else:
-            ws.log.debug("New websocket connection coming in, closing old one")
-            await old_websocket.close(code=WS_CLOSE_REPLACED, status="conn_replaced")
+        # Close out any other open websockets for this appservice, first on the
+        # local instance then via Redis to other asmux instances.
+        await self.close_stale_az_websocket(az)
+        await self.server.as_requester.close_other_stale_az_websockets(az)
         try:
             self.websockets[az.id] = ws
             CONNECTED_WEBSOCKETS.labels(owner=az.owner, bridge=az.prefix).inc()

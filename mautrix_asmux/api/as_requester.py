@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import asyncio
 import json
 import logging
+import socket
 import time
 
 from aioredis import Redis
@@ -25,10 +26,13 @@ from .websocket_util import SENSITIVE_REQUESTS
 if TYPE_CHECKING:
     from ..server import MuxServer
 
+HOSTNAME = socket.gethostname()
+
 PING_REQUEST_CHANNEL = "bridge-ping-requests"
 COMMAND_REQUEST_CHANNEL = "bridge-command-requests"
 SYNCPROXY_ERROR_REQUEST_CHANNEL = "bridge-syncproxy-error-requests"
 WAKEUP_NOTIFICATION_CHANNEL = "bridge-wakeup-notifications"
+WEBSOCKET_CLEANUP_NOTIFICATION_CHANNEL = "bridge-websocket-cleanup"
 
 # Minimum delay since last websocket push before pre-emptively making a wakeup push on new message
 PREEMPTIVE_WAKEUP_PUSH_DELAY = 30
@@ -84,6 +88,7 @@ class AppServiceRequester:
                 COMMAND_REQUEST_CHANNEL: self.handle_bridge_command_request,
                 SYNCPROXY_ERROR_REQUEST_CHANNEL: self.handle_syncproxy_error_request,
                 WAKEUP_NOTIFICATION_CHANNEL: self.handle_wakeup_appservice_notification,
+                WEBSOCKET_CLEANUP_NOTIFICATION_CHANNEL: self.handle_close_stale_az_websockets,
             },
         )
 
@@ -249,6 +254,23 @@ class AppServiceRequester:
     async def notify_appservice_wakeup(self, az: AppService) -> None:
         if not az.push:
             await self.redis.publish(WAKEUP_NOTIFICATION_CHANNEL, str(az.id))
+
+    # Websocket stale connection handling (websocket only)
+
+    async def handle_close_stale_az_websockets(self, message: str) -> None:
+        az_id, hostname = json.loads(message)
+        # Ignore close stale AZ websocket requests from ourselves
+        if hostname == HOSTNAME:
+            return
+        az = await AppService.get(UUID(az_id))
+        if az:
+            await self.server.as_websocket.close_stale_az_websocket(az)
+
+    async def close_other_stale_az_websockets(self, az: AppService) -> None:
+        await self.redis.publish(
+            WEBSOCKET_CLEANUP_NOTIFICATION_CHANNEL,
+            json.dumps([str(az.id), HOSTNAME]),
+        )
 
     # Syncproxy errors (websocket only)
 
