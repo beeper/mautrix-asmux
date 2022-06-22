@@ -20,6 +20,7 @@ CommandHandler = Callable[["WebsocketHandler", Data], Awaitable[Optional[Data]]]
 class RequestWaiter(NamedTuple):
     fut: asyncio.Future
     command: str
+    start_time: float
 
     def redact_log_content(self, data: str, req: dict) -> str:
         if self.command in SENSITIVE_RESPONSES:
@@ -129,13 +130,17 @@ class WebsocketHandler:
                 self.log.debug(f"Unhandled response received: {req}")
             else:
                 log_content = waiter.redact_log_content(msg.data, req)
+                took = time.time() - waiter.start_time
                 if waiter.fut.cancelled():
                     self.log.debug(
-                        f"Got response to {req_id} ({waiter.command}), "
+                        f"Got response to {req_id} ({waiter.command}), took {took}s, "
                         f"but the waiter is cancelled: {log_content}"
                     )
                     return
-                self.log.debug(f"Received response to {req_id} ({waiter.command}): {log_content}")
+                self.log.debug(
+                    f"Received response to {req_id} ({waiter.command}), took {took}s: "
+                    "{log_content}"
+                )
                 if command == "response":
                     waiter.fut.set_result(data)
                 elif command == "error":
@@ -188,7 +193,11 @@ class WebsocketHandler:
         self._prev_req_id += 1
         req_id = self._prev_req_id
         fut = asyncio.get_running_loop().create_future()
-        self._request_waiters[req_id] = RequestWaiter(fut=fut, command=command)
+        self._request_waiters[req_id] = RequestWaiter(
+            fut=fut,
+            command=command,
+            start_time=time.time(),
+        )
         await self.send(
             command=command,
             id=req_id,
