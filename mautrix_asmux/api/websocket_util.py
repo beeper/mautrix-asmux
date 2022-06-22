@@ -139,7 +139,7 @@ class WebsocketHandler:
                     return
                 self.log.debug(
                     f"Received response to {req_id} ({waiter.command}), took {took}s: "
-                    "{log_content}"
+                    f"{log_content}"
                 )
                 if command == "response":
                     waiter.fut.set_result(data)
