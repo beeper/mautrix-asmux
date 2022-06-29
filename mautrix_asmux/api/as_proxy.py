@@ -284,9 +284,7 @@ class AppServiceProxy(AppServiceServerMixin):
                 # TODO metrics/logs for received OTK counts?
                 output[az.id].otk_count[user_id] = user_otk_count
 
-    async def _send_transactions(
-        self, events: dict[UUID, Events], synchronous_to: list[str]
-    ) -> dict[str, Any]:
+    async def _send_transactions(self, events: dict[UUID, Events]) -> dict[str, Any]:
         wait_for: dict[UUID, Awaitable[str]] = {}
 
         for appservice_id, az_events in events.items():
@@ -297,20 +295,17 @@ class AppServiceProxy(AppServiceServerMixin):
                 f"Preparing to send {len(az_events.pdu)} PDUs and {len(az_events.edu)} EDUs "
                 f"from transaction {az_events.txn_id} to {appservice.name}"
             )
-            task = asyncio.create_task(
+            wait_for[appservice.id] = asyncio.create_task(
                 log_task_exceptions(self.log, self.post_events(appservice, az_events)),
             )
-            if str(appservice.id) in synchronous_to:
-                wait_for[appservice.id] = task
-
-        if not synchronous_to:
-            return {"com.beeper.asmux.synchronous": False}
 
         sent_to: dict[str, str] = {}
         if wait_for:
             for appservice_id, az_task in wait_for.items():
                 sent_to[str(appservice_id)] = await az_task
         return {
+            # Technically this is not the case as we push to Redis first, but this is only for syncproxy
+            # which is due to be removed once AS' receive to-device events.
             "com.beeper.asmux.sent_to": sent_to,
             "com.beeper.asmux.synchronous": True,
         }
@@ -345,7 +340,7 @@ class AppServiceProxy(AppServiceServerMixin):
         if len(synchronous_to) == 1:
             data[UUID(synchronous_to[0])].device_lists = device_lists or DeviceLists()
 
-        return await self._send_transactions(data, synchronous_to)
+        return await self._send_transactions(data)
 
     async def handle_syncproxy_error(self, request: web.Request) -> web.Response:
         txn_id, data = await self._read_transaction_header(request)
