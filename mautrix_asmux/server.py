@@ -127,8 +127,8 @@ class MuxServer:
 
     async def stop(self) -> None:
         self.as_http.stop_pushers()
-        asyncio.create_task(self.as_websocket.stop())
-        asyncio.create_task(self.http.close())
+        await self.as_websocket.stop()
+        await self.http.close()
         self.log.debug("Stopping web server")
         await self.runner.shutdown()
         await self.runner.cleanup()
