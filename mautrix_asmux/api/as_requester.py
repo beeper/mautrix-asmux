@@ -124,14 +124,17 @@ class AppServiceRequester:
             pipe.expire(request_queue, 300)
             await pipe.execute()
 
-    async def wakeup_appservice(self, az: AppService) -> None:
+    async def wakeup_appservice(self, az: AppService, ttl: int | None = None) -> None:
         if az.push_key is None:
             self.log.debug(f"{az.name} has no push key, cannot send wakeup!")
             return
         try:
             self.log.debug(f"Trying to wake up {az.name} via Sygnal push")
             resp: aiohttp.ClientResponse
-            async with az.push_key.push(type="com.beeper.asmux.websocket_wakeup") as resp:
+            async with az.push_key.push(
+                type="com.beeper.asmux.websocket_wakeup",
+                ttl=ttl,
+            ) as resp:
                 if not 200 <= resp.status < 300:
                     text = await resp.text()
                     text = text.replace("\n", "\\n")
@@ -156,8 +159,8 @@ class AppServiceRequester:
         except Exception as e:
             self.log.warning(f"Failed to send wakeup push for {az.name}: {e}")
 
-    async def send_wakeup(self, az: AppService) -> None:
-        asyncio.create_task(self.wakeup_appservice(az))
+    async def send_wakeup(self, az: AppService, ttl: int | None = None) -> None:
+        asyncio.create_task(self.wakeup_appservice(az, ttl))
         await self.notify_appservice_wakeup(az)
 
     # Transactions (http & websocket)
@@ -197,9 +200,8 @@ class AppServiceRequester:
                 min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
                 min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
             ):
-                await self.send_wakeup(az)
+                await self.send_wakeup(az, ttl=0)
 
-            # TODO: is this still required?
             asyncio.create_task(self.send_wakeup_if_not_connected(az))
 
         return "ok"
