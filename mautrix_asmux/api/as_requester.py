@@ -11,6 +11,7 @@ import socket
 import time
 
 from aioredis import Redis
+import aiohttp
 
 from mautrix.types import UserID
 from mautrix.util.bridge_state import BridgeStateEvent, GlobalBridgeState
@@ -123,8 +124,40 @@ class AppServiceRequester:
             pipe.expire(request_queue, 300)
             await pipe.execute()
 
+    async def wakeup_appservice(self, az: AppService) -> None:
+        if az.push_key is None:
+            self.log.debug(f"{az.name} has no push key, cannot send wakeup!")
+            return
+        try:
+            self.log.debug(f"Trying to wake up {az.name} via Sygnal push")
+            resp: aiohttp.ClientResponse
+            async with az.push_key.push(type="com.beeper.asmux.websocket_wakeup") as resp:
+                if not 200 <= resp.status < 300:
+                    text = await resp.text()
+                    text = text.replace("\n", "\\n")
+                    self.log.warning(
+                        f"Unexpected status code {resp.status} trying to wake up {az.name}: {text}"
+                    )
+                else:
+                    try:
+                        data = await resp.json(content_type=None)
+                    except json.JSONDecodeError:
+                        text = await resp.text()
+                        text = text.replace("\n", "\\n")
+                        self.log.warning(
+                            f"Unexpected response trying to wake up {az.name}: {text}"
+                        )
+                    else:
+                        if az.push_key.pushkey in data.get("rejected", {}):
+                            self.log.warning(f"Sygnal rejected wakeup push for {az.name}")
+                            await az.set_push_key(None)
+                        else:
+                            self.log.debug(f"Sygnal didn't report errors waking up {az.name}")
+        except Exception as e:
+            self.log.warning(f"Failed to send wakeup push for {az.name}: {e}")
+
     async def send_wakeup(self, az: AppService) -> None:
-        asyncio.create_task(self.server.as_websocket.wakeup_appservice(az))
+        asyncio.create_task(self.wakeup_appservice(az))
         await self.notify_appservice_wakeup(az)
 
     # Transactions (http & websocket)

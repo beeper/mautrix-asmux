@@ -394,7 +394,7 @@ class AppServiceWebsocketHandler:
                 )
                 return
             elif await queue.contains_pdus() and self.should_wakeup(az):
-                await self.wakeup_appservice(az)
+                await self.server.as_requester.wakeup_appservice(az)
         except Exception:
             if txn is None:
                 ws.log.exception("Failed to get next transaction")
@@ -443,38 +443,6 @@ class AppServiceWebsocketHandler:
 
     def set_prev_wakeup_push(self, az: AppService) -> None:
         self.prev_wakeup_push[az.id] = time.time()
-
-    async def wakeup_appservice(self, az: AppService) -> None:
-        if az.push_key is None:
-            self.log.debug(f"{az.name} has no push key, cannot send wakeup!")
-            return
-        try:
-            self.log.debug(f"Trying to wake up {az.name} via Sygnal push")
-            resp: aiohttp.ClientResponse
-            async with az.push_key.push(type="com.beeper.asmux.websocket_wakeup") as resp:
-                if not 200 <= resp.status < 300:
-                    text = await resp.text()
-                    text = text.replace("\n", "\\n")
-                    self.log.warning(
-                        f"Unexpected status code {resp.status} trying to wake up {az.name}: {text}"
-                    )
-                else:
-                    try:
-                        data = await resp.json(content_type=None)
-                    except json.JSONDecodeError:
-                        text = await resp.text()
-                        text = text.replace("\n", "\\n")
-                        self.log.warning(
-                            f"Unexpected response trying to wake up {az.name}: {text}"
-                        )
-                    else:
-                        if az.push_key.pushkey in data.get("rejected", {}):
-                            self.log.warning(f"Sygnal rejected wakeup push for {az.name}")
-                            await az.set_push_key(None)
-                        else:
-                            self.log.debug(f"Sygnal didn't report errors waking up {az.name}")
-        except Exception as e:
-            self.log.warning(f"Failed to send wakeup push for {az.name}: {e}")
 
     async def post_syncproxy_error(self, az: AppService, txn_id: str, data: dict[str, Any]) -> str:
         try:
