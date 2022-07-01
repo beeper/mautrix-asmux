@@ -393,7 +393,7 @@ class AppServiceWebsocketHandler:
                     ws.close(code=WS_NOT_ACKNOWLEDGED, status="transactions_not_acknowledged")
                 )
                 return
-            elif await queue.contains_pdus() and self.should_wakeup(az):
+            elif self.should_wakeup(az):
                 await self.server.as_requester.wakeup_appservice(az)
         except Exception:
             if txn is None:
