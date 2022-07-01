@@ -119,6 +119,7 @@ class MuxServer:
         await self.redis_pubsub.setup()
         await self.redis_cache_handler.setup()
         await self.as_requester.setup()
+        await self.as_http.setup()
 
         self.log.debug("Starting web server")
         await self.runner.setup()
@@ -126,7 +127,7 @@ class MuxServer:
         await site.start()
 
     async def stop(self) -> None:
-        self.as_http.stop_pushers()
+        await self.as_http.stop_pushers()
         await self.as_websocket.stop()
         await self.http.close()
         self.log.debug("Stopping web server")

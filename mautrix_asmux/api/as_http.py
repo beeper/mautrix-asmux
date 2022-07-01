@@ -22,9 +22,12 @@ from mautrix.util.message_send_checkpoint import (
 )
 
 from ..database import AppService
+from ..util import log_task_exceptions
 from .as_proxy import Events, migrate_state_data, send_message_checkpoints
 from .as_queue import AppServiceQueue
 from .as_util import make_ping_error, send_failed_metrics, send_successful_metrics
+
+RESTART_PUSHERS_QUEUE = "bridge-pushers-to-start"
 
 
 class AppServiceHTTPHandler:
@@ -55,11 +58,22 @@ class AppServiceHTTPHandler:
         self.pusher_locks = {}
         self.pusher_tasks = {}
 
-    def stop_pushers(self):
+    async def setup(self) -> None:
+        while True:
+            az_id = await self.redis.rpop(RESTART_PUSHERS_QUEUE)
+            if not az_id:
+                break
+
+            az = await AppService.get(az_id.decode())
+            if az:
+                await self.ensure_pusher_running(az)
+
+    async def stop_pushers(self):
         self.log.debug("Stoping pushers")
-        for task in self.pusher_tasks.values():
+        for az_id, task in self.pusher_tasks.items():
             if not task.done():
                 task.cancel()
+                await self.redis.lpush(RESTART_PUSHERS_QUEUE, str(az_id))
 
     def get_queue(self, az: AppService) -> AppServiceQueue:
         return self.queues.setdefault(
@@ -93,7 +107,9 @@ class AppServiceHTTPHandler:
             return
 
         self.log.debug("Starting HTTP pusher for %s", az.name)
-        self.pusher_tasks[az.id] = asyncio.create_task(self.post_events_from_queue(az))
+        self.pusher_tasks[az.id] = asyncio.create_task(
+            log_task_exceptions(self.log, self.post_events_from_queue(az)),
+        )
 
     async def post_events_from_queue(self, az: AppService) -> None:
         lock = self.get_lock(az)
