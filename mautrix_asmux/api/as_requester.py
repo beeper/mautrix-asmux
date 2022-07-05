@@ -200,7 +200,12 @@ class AppServiceRequester:
                 min_time_since_last_push=PREEMPTIVE_WAKEUP_PUSH_DELAY,
                 min_time_since_ws_message=PREEMPTIVE_WAKEUP_PUSH_DELAY,
             ):
+                # Best effort attempt to get the phone to wakeup - first a notification
+                # with 0-TTL meaning delivered immediately if the phone is connected,
+                # second a 15s TTL giving the phone 15s to connect to FCM to pull the
+                # notification and connect.
                 await self.send_wakeup(az, ttl=0)
+                await self.send_wakeup(az, ttl=15)
 
             asyncio.create_task(self.send_wakeup_if_not_connected(az))
 
