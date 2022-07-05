@@ -48,7 +48,10 @@ class RedisPubSub:
         while True:
             try:
                 await self.redis.ping()
+                await self.pubsub.ping()
                 async for message in self.pubsub.listen():
+                    if message["channel"] is None:
+                        continue
                     channel = message["channel"].decode()
                     handler = self.channel_handlers.get(channel)
                     if handler:
