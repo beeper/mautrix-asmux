@@ -72,10 +72,27 @@ def _get_tracking_event_type(appservice: "AppService", event: "JSON") -> Optiona
     return "Outgoing Matrix event"
 
 
+# >>> _should_not_track({})
+# False
+# >>> _should_not_track({"content":{}})
+# False
+# >>> _should_not_track({"content":{"com.beeper.do_not_track": True}})
+# True
+
+
+def _should_not_track(event: "JSON") -> bool:
+    try:
+        return event["content"]["com.beeper.do_not_track"] == True
+    except (KeyError, TypeError):
+        return False
+
+
 def track_event(az: Optional["AppService"], pdu: "JSON") -> None:
     if not token:
         return
     if not az:
+        return
+    if _should_not_track(pdu):
         return
     event_type = _get_tracking_event_type(az, pdu)
     if event_type:
