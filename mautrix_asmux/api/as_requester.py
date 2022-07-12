@@ -132,6 +132,7 @@ class AppServiceRequester:
             self.log.debug(f"Trying to wake up {az.name} via Sygnal push")
             resp: aiohttp.ClientResponse
             async with az.push_key.push(
+                az=az,
                 type="com.beeper.asmux.websocket_wakeup",
                 ttl=ttl,
             ) as resp:

@@ -1,6 +1,6 @@
 # mautrix-asmux - A Matrix application service proxy and multiplexer
 # Copyright (C) 2021 Beeper, Inc. All rights reserved.
-from typing import Any, AsyncIterator, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Optional
 from contextlib import asynccontextmanager
 import time
 
@@ -9,6 +9,9 @@ import aiohttp
 
 from mautrix.api import HTTPAPI
 from mautrix.types import SerializableAttrs, field
+
+if TYPE_CHECKING:
+    from mautrix_asmux.database.table.appservice import AppService
 
 
 @dataclass
@@ -22,7 +25,7 @@ class PushKey(SerializableAttrs):
     data: dict[str, Any] = field(factory=lambda: {})
 
     @asynccontextmanager
-    async def push(self, **data: Any) -> AsyncIterator[aiohttp.ClientResponse]:
+    async def push(self, az: AppService, **data: Any) -> AsyncIterator[aiohttp.ClientResponse]:
         if self._sess is None:
             self.__class__._sess = aiohttp.ClientSession(
                 headers={
@@ -30,10 +33,13 @@ class PushKey(SerializableAttrs):
                 }
             )
 
+        device = self.serialize()
+        device["user_id"] = az.owner
+
         payload = {
             "notification": {
                 **data,
-                "devices": [self.serialize()],
+                "devices": [device],
             }
         }
 
