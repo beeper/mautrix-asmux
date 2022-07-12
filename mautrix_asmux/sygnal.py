@@ -25,7 +25,7 @@ class PushKey(SerializableAttrs):
     data: dict[str, Any] = field(factory=lambda: {})
 
     @asynccontextmanager
-    async def push(self, az: AppService, **data: Any) -> AsyncIterator[aiohttp.ClientResponse]:
+    async def push(self, az: "AppService", **data: Any) -> AsyncIterator[aiohttp.ClientResponse]:
         if self._sess is None:
             self.__class__._sess = aiohttp.ClientSession(
                 headers={
