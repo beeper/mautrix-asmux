@@ -33,6 +33,10 @@ appservice:
         # Whether or not the prefix should be exclusively for asmux (and the services behind it).
         exclusive: true
 
+sentry:
+    enabled: false
+    dsn: null
+
 segment:
     token: null
     host: api.segment.io

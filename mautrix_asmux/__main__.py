@@ -12,6 +12,7 @@ from . import __version__
 from .config import Config
 from .database import Base, upgrade_table
 from .segment import init as init_segment
+from .sentry import init as init_sentry
 from .server import MuxServer
 
 
@@ -67,6 +68,7 @@ class AppServiceMux(Program):
         HTTPAPI.default_ua = f"{self.name}/{self.version} {HTTPAPI.default_ua}"
         self.client = self.loop.run_until_complete(self._create_client())
         self.server = MuxServer(self.config, http=self.client)
+
         if self.config["segment.token"]:
             init_segment(
                 self.config["segment.token"],
@@ -74,6 +76,9 @@ class AppServiceMux(Program):
                 ":" + self.config["homeserver.domain"],
                 self.client,
             )
+
+        if self.config["sentry.enabled"]:
+            init_sentry(self.config["homeserver.domain"], self.config["sentry_dsn"])
 
     async def _create_client(self) -> ClientSession:
         conn = TCPConnector(limit=0)

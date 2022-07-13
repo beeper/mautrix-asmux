@@ -74,6 +74,9 @@ class Config(BaseFileConfig, BaseValidatableConfig):
         copy("segment.token")
         copy("segment.host")
 
+        copy("sentry.enabled")
+        copy("sentry.dsn")
+
         copy("metrics.enabled")
         copy("metrics.port")
 
