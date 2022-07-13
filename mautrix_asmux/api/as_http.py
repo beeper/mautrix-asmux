@@ -147,7 +147,9 @@ class AppServiceHTTPHandler:
             )
             try:
                 resp = await self.http.put(
-                    url.with_query({"access_token": az.hs_token}), json=events.serialize()
+                    url.with_query({"access_token": az.hs_token}),
+                    json=events.serialize(),
+                    timeout=aiohttp.ClientTimeout(total=10),
                 )
             except ClientError as e:
                 last_error = str(e)
