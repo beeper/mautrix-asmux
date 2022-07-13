@@ -3,7 +3,7 @@ import logging
 from sentry_sdk.integrations.aiohttp import AioHttpIntegration
 import sentry_sdk
 
-log = logging.getLogger("mau.segment")
+log = logging.getLogger("mau.sentry")
 
 
 def init(environment: str, dsn: str):
