@@ -151,7 +151,7 @@ class AppServiceHTTPHandler:
                     json=events.serialize(),
                     timeout=aiohttp.ClientTimeout(total=10),
                 )
-            except ClientError as e:
+            except (ClientError, asyncio.TimeoutError) as e:
                 last_error = str(e)
                 self.log.debug(f"{err_prefix}: {last_error}")
             except Exception:
