@@ -10,7 +10,9 @@ RUN apk add --no-cache \
       py3-bcrypt \
       # Other dependencies
       ca-certificates \
-      su-exec
+      su-exec \
+      # Datadog deps
+      gcc musl-dev linux-headers cmake openssl-dev
 
 COPY requirements.txt /opt/mautrix-asmux/requirements.txt
 WORKDIR /opt/mautrix-asmux
