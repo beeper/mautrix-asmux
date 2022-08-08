@@ -3,6 +3,8 @@
 import sys
 
 from aiohttp import ClientSession, DummyCookieJar, TCPConnector
+from ddtrace import tracer
+from ddtrace.contrib.aiohttp import trace_app
 
 from mautrix.api import HTTPAPI
 from mautrix.util.async_db import Database
@@ -68,6 +70,9 @@ class AppServiceMux(Program):
         HTTPAPI.default_ua = f"{self.name}/{self.version} {HTTPAPI.default_ua}"
         self.client = self.loop.run_until_complete(self._create_client())
         self.server = MuxServer(self.config, http=self.client)
+
+        # Setup DataDog tracing
+        trace_app(self.server.app, tracer, service="asmux")
 
         if self.config["segment.token"]:
             init_segment(
