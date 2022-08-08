@@ -1,6 +1,5 @@
 build:
   stage: build
-  needs: []
   image: docker:latest
   services:
     - docker:dind
@@ -16,7 +15,6 @@ build:
 
 lint:
   stage: test
-  needs: []
   image: python:latest
   before_script:
     - pip install -r dev-requirements.txt
