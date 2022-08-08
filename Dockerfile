@@ -10,12 +10,11 @@ RUN apk add --no-cache \
       py3-bcrypt \
       # Other dependencies
       ca-certificates \
-      su-exec \
-      # Datadog deps
-      gcc musl-dev linux-headers cmake openssl-dev
+      su-exec
 
 COPY requirements.txt /opt/mautrix-asmux/requirements.txt
 WORKDIR /opt/mautrix-asmux
+RUN pip3 install pip -U
 RUN apk add build-base python3-dev && pip3 install -r requirements.txt && apk del build-base python3-dev
 
 COPY . /opt/mautrix-asmux
