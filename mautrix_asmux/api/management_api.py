@@ -65,7 +65,6 @@ class ManagementAPI:
     app: web.Application
     mxauth_app: web.Application
     public_app: web.Application
-    websocket_app: web.Application
 
     def __init__(
         self,
@@ -117,8 +116,6 @@ class ManagementAPI:
         self.public_app = web.Application()
         self.public_app.router.add_get("/config/{prefix}/register", self.register_config)
         self.public_app.router.add_get("/config/{prefix}/download", self.download_config)
-
-        self.websocket_app = web.Application(middlewares=[self.check_ws_auth])  # type: ignore
 
         self._cors = {
             "Access-Control-Allow-Origin": "*",
