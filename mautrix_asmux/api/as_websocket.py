@@ -238,6 +238,10 @@ class AppServiceWebsocketHandler:
             )
             self.log.trace("Sync proxy stop error", exc_info=True)
 
+    async def set_push_key(self, az: AppService, data: JSON) -> None:
+        self.log.info(f"Setting puskey for {az.name}")
+        await az.set_push_key(PushKey.deserialize(data))
+
     def has_az_websocket(self, az: AppService) -> bool:
         return az.id in self.websockets
 
@@ -276,7 +280,7 @@ class AppServiceWebsocketHandler:
         ws.set_handler(
             "message_checkpoint", lambda _, data: send_message_checkpoints(self, az, data)  # type: ignore
         )
-        ws.set_handler("push_key", lambda _, data: az.set_push_key(PushKey.deserialize(data)))  # type: ignore
+        ws.set_handler("push_key", lambda _, data: self.set_push_key(az, data))  # type: ignore
         ws.set_handler("start_sync", lambda _, data: self.start_sync_proxy(az, data))  # type: ignore
         ws.set_handler("ping", lambda ws, _: self.ping_server(az, ws))  # type: ignore
         await ws.prepare(req)
