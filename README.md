@@ -1,4 +1,8 @@
-# mautrix-asmux
+# No longer maintained
+mautrix-asmux powered the old Beeper infrastructure from 2020 to 2022. Beeper has since switched
+to a new infrastructure based on hungryserv, and this project is no longer maintained.
+
+## mautrix-asmux
 A Matrix application service proxy and multiplexer.
 
 The general idea of this project is to make it possible to dynamically provision appservices. The

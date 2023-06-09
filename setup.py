@@ -12,7 +12,7 @@ except IOError:
 setuptools.setup(
     name="mautrix-asmux",
     version=__version__,
-    url="https://gitlab.com/nova/mautrix-asmux",
+    url="https://github.com/beeper/mautrix-asmux",
 
     author="Tulir Asokan",
     author_email="tulir@maunium.net",
@@ -27,8 +27,8 @@ setuptools.setup(
     python_requires="~=3.9",
 
     classifiers=[
-        "Development Status :: 4 - Beta",
-        "License :: Other/Proprietary License",
+        "Development Status :: 7 - Inactive",
+        "License :: OSI Approved :: Apache Software License",
         "Topic :: Communications :: Chat",
         "Framework :: AsyncIO",
         "Programming Language :: Python",
